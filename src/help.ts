@@ -1,59 +1,50 @@
 import type { Command } from './command'
-import type { OptionSchema, ResolvedOption } from './options'
+import type { ResolvedFlag } from './flags'
 
 interface HelpSection {
   body: string
   title?: string
 }
 
+interface Row {
+  description: string
+  label: string
+}
+
 export function formatCommands(commands: readonly Command[]): string {
-  const rows = commands.map(command => ({
+  return formatRows(commands.map(command => ({
     description: command.default ? `${command.description} (default)` : command.description,
     label: [
       [command.name, ...(command.alias ?? [])].join(', '),
-      command.commands ? '<command>' : command.args,
+      command.children ? '<command>' : command.arguments,
     ].filter(Boolean).join(' '),
-  }))
-
-  return formatRows(rows)
+  })))
 }
 
-/**
- * Renders help for the last command in `nodes` (the CLI root is `nodes[0]`).
- *
- * Options of the command itself are listed under "Options"; options inherited from the
- * root and ancestors are listed under "Global Options" so a leaf's help stays focused on
- * what that leaf adds.
- */
+/** Renders help for the last command in `nodes` (the CLI root is `nodes[0]`). */
 export function renderHelp(
   nodes: readonly Command[],
-  resolved: ReadonlyMap<Command, readonly ResolvedOption[]>,
+  flagsOf: (command: Command) => readonly ResolvedFlag[],
   version: string | undefined,
 ): string {
   const command = nodes.at(-1)!
-  const isRoot = nodes.length === 1
-  const builtins = builtinOptions(version)
-  const own = resolved.get(command) ?? []
-  const inherited = nodes.slice(0, -1).flatMap(node => resolved.get(node) ?? [])
   const sections: HelpSection[] = [
     { body: command.help ?? command.description },
     { body: formatUsage(nodes).map(line => `  $ ${line}`).join('\n'), title: 'Usage' },
   ]
 
-  if (command.commands?.length) {
-    sections.push({ body: formatCommands(command.commands), title: 'Commands' })
+  if (command.children?.length) {
+    sections.push({ body: formatCommands(command.children), title: 'Commands' })
   }
 
-  const options = isRoot ? [...own, ...builtins] : own
-  const globals = isRoot ? [] : [...inherited, ...builtins]
-
-  if (options.length > 0) {
-    sections.push({ body: formatOptions(options), title: 'Options' })
-  }
-
-  if (globals.length > 0) {
-    sections.push({ body: formatOptions(globals), title: 'Global Options' })
-  }
+  sections.push({
+    body: formatRows([
+      ...flagsOf(command).map(flag => ({ description: formatFlagDescription(flag), label: formatFlagLabel(flag) })),
+      { description: 'Show help', label: '-h, --help' },
+      ...(version === undefined ? [] : [{ description: 'Show version', label: '-v, --version' }]),
+    ]),
+    title: 'Flags',
+  })
 
   if (command.examples?.length) {
     sections.push({
@@ -70,66 +61,29 @@ export function renderHelp(
     .join('\n\n')}\n`
 }
 
-// Built-in flags are handled by the router and never validated; the schema only fills the shape.
-const builtinSchema: OptionSchema = {
-  '~standard': {
-    jsonSchema: { input: () => ({ type: 'boolean' }), output: () => ({ type: 'boolean' }) },
-    validate: value => ({ value }),
-    vendor: 'cliff',
-    version: 1,
-  },
-}
-
-function builtinOptions(version: string | undefined): ResolvedOption[] {
-  const options: ResolvedOption[] = [
-    { description: 'Show help', flag: 'help', key: 'help', multiple: false, schema: builtinSchema, short: 'h', type: 'boolean' },
-  ]
-
-  if (version !== undefined) {
-    options.push({ description: 'Show version', flag: 'version', key: 'version', multiple: false, schema: builtinSchema, short: 'v', type: 'boolean' })
-  }
-
-  return options
-}
-
-function formatOptionDescription(option: ResolvedOption): string {
+function formatFlagDescription(flag: ResolvedFlag): string {
   const notes: string[] = []
 
-  if (option.multiple) {
+  if (flag.multiple) {
     notes.push('repeatable')
   }
 
   // Booleans show their default through the `--no-` spelling, and an empty list is noise.
-  const hidden = option.type === 'boolean' || (Array.isArray(option.default) && option.default.length === 0)
+  const hidden = flag.type === 'boolean' || (Array.isArray(flag.default) && flag.default.length === 0)
 
-  if (option.default !== undefined && !hidden) {
-    notes.push(`default: ${Array.isArray(option.default) ? option.default.join(', ') : String(option.default)}`)
+  if (flag.default !== undefined && !hidden) {
+    notes.push(`default: ${Array.isArray(flag.default) ? flag.default.join(', ') : String(flag.default)}`)
   }
 
-  return notes.length > 0 ? `${option.description} (${notes.join(', ')})` : option.description
+  return notes.length > 0 ? `${flag.description} (${notes.join(', ')})` : flag.description
 }
 
-function formatOptionLabel(option: ResolvedOption): string {
-  // A boolean that defaults to on is only useful in its negated form.
-  const flag = option.type === 'boolean' && option.default === true
-    ? `--no-${option.flag}`
-    : `--${option.flag}`
-  const short = option.short === undefined || option.default === true ? '    ' : `-${option.short}, `
-  const value = option.type === 'boolean'
-    ? ''
-    : ` <${option.placeholder ?? (option.choices ? option.choices.join('|') : option.type === 'number' ? 'n' : 'value')}>`
-
-  return `${short}${flag}${value}`
+function formatFlagLabel(flag: ResolvedFlag): string {
+  // Indent long-only flags so their `--` lines up with the flags that have a short alias.
+  return flag.short === undefined ? `    ${flag.spelling}` : flag.spelling
 }
 
-function formatOptions(options: readonly ResolvedOption[]): string {
-  return formatRows(options.map(option => ({
-    description: formatOptionDescription(option),
-    label: formatOptionLabel(option),
-  })))
-}
-
-function formatRows(rows: ReadonlyArray<{ description: string, label: string }>): string {
+function formatRows(rows: readonly Row[]): string {
   const width = Math.max(...rows.map(row => row.label.length))
 
   return rows.map(row => `  ${row.label.padEnd(width)}  ${row.description}`).join('\n')
@@ -140,12 +94,12 @@ function formatUsage(nodes: readonly Command[]): string[] {
   const path = nodes.map(node => node.name).join(' ')
   const lines: string[] = []
 
-  if (command.commands?.length) {
-    lines.push(`${path} <command> [options]`)
+  if (command.children?.length) {
+    lines.push(`${path} <command> [flags]`)
   }
 
-  if (command.run || !command.commands?.length) {
-    lines.push([path, command.args, '[options]'].filter(Boolean).join(' '))
+  if (command.action || !command.children?.length) {
+    lines.push([path, command.arguments, '[flags]'].filter(Boolean).join(' '))
   }
 
   return lines

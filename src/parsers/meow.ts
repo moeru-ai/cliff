@@ -12,7 +12,7 @@ import meow from 'meow'
  */
 export const meowParser: ArgvParser = {
   name: 'meow',
-  parse(argv, options) {
+  parse(argv, flags) {
     // NOTICE: meow assigns `process.title` from package.json on every call. Restore it so
     // parsing has no process-wide side effect.
     // https://github.com/sindresorhus/meow/blob/14a216feea8408d84162fab5f9823c4d5b308ef2/source/index.js#L188
@@ -26,15 +26,13 @@ export const meowParser: ArgvParser = {
         autoVersion: false,
         booleanDefault: undefined,
         description: false,
-        flags: Object.fromEntries(options.map(option => [option.key, {
+        flags: Object.fromEntries(flags.map(flag => [flag.key, {
           // NOTICE: meow throws "The flag --x can only be set once" for a repeated flag that is
           // not `isMultiple`. Collect every flag as an array and let cliff keep the last value,
           // matching cac and `node:util`.
           isMultiple: true,
-          shortFlag: option.short,
-          // yargs-parser turns an invalid number into `NaN`, which loses the text cliff quotes
-          // in its error message; cliff coerces numbers from the raw string instead.
-          type: option.type === 'boolean' ? 'boolean' as const : 'string' as const,
+          shortFlag: flag.short,
+          type: flag.type,
         }])),
         // NOTICE: meow requires `importMeta` to find package.json for help and version text.
         // cliff renders those itself, so an empty `pkg` skips the lookup entirely.

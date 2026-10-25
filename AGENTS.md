@@ -5,14 +5,17 @@
 
 ## Structure & Responsibilities
 
-- `src/command.ts`: public command DSL (`defineCommand`, `defineGlobalOptions`) and context types.
-- `src/options.ts`: options are Standard Schema + Standard JSON Schema. The argv shape is derived synchronously from `~standard.jsonSchema.input()` while `createCli` runs, and values are validated with `~standard.validate`.
+- `src/command.ts`: public command DSL (`defineCommand`) and context types.
+- `src/flags.ts`: `defineFlags`, flag-spelling parsing and its type inference (`-c, --config <path>`), and optional Standard Schema validation with `~standard.validate`. Flags are never inherited; shared sets are spread in.
 - `src/arguments.ts`: positional-argument patterns and their type inference.
+- `src/tree.ts`: `buildTree` validates the command tree once (`DefinitionError`) and indexes every flag.
 - `src/route.ts`: one left-to-right argv pass that selects the command and prepares parser input.
-- `src/help.ts`: help rendering. `src/cli.ts`: `createCli`, tree validation, run loop and exit codes.
+- `src/invocation.ts`: `resolveInvocation` decides what one argv asks for (action context, help, version, or usage error) without running or writing anything. Test routing and validation here.
+- `src/help.ts`: help rendering. `src/cli.ts`: `createCli` and the run loop that turns an invocation into output and an exit code.
+- `src/testing.ts`: `createMemoryIo`, the public `@moeru/cliff/testing` entry.
 - `src/main.ts`: the only module bound to `process` (`runMain`).
 - `src/parser.ts`: the side-effect-free `ArgvParser` contract. `src/parsers/*`: node, cac, meow adapters, exported as subpaths.
-- Routing, help, version, and number coercion belong to cliff; defaults and value validation belong to the option schema. Adapters only split argv into flags and positionals.
+- Routing, help, version, defaults, and choices belong to cliff; validation and transforms belong to the flag's schema. Adapters only split argv into flags and positionals.
 
 ## Commands
 
@@ -23,7 +26,8 @@
 ## Development Practices
 
 - Any behavior that users observe through a parser must be covered by the parser contract suite in `src/cli.test.ts`, so every adapter is held to it. Document a deliberate adapter divergence with `it.skipIf` and a README note.
-- Tests use Valibot schemas wrapped with `toStandardJsonSchema` from `@valibot/to-json-schema`. Do not reimplement schema validation inside cliff.
+- Tests use Valibot for flag schemas. Do not reimplement schema validation inside cliff.
+- Keep the runtime flag-spelling parser (`resolveFlag`) and the type-level one (`InferFlags`) in sync; cover new spellings in both `cli.test.ts` and `command.test-d.ts`.
 - Use `errorMessageFrom(error)` from `@moeru/std` instead of manual `error instanceof Error ? error.message : String(error)`.
 - Do not add backward-compatibility guards while the package is 0.x.
 - Never write to `process.*` or `console.*` outside `src/main.ts`; commands and cliff write through the injected `CliIo`.

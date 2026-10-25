@@ -1,12 +1,9 @@
 import type { Command } from './command'
-import type { ResolvedOption } from './options'
+import type { ResolvedFlag } from './flags'
+import type { CommandTree } from './tree'
 
 import { UsageError } from './errors'
-
-export interface OptionIndex {
-  long: Map<string, ResolvedOption>
-  short: Map<string, ResolvedOption>
-}
+import { indexFlags } from './tree'
 
 export interface Route {
   /** argv for the parser: command-name tokens removed, nothing from the first bare `--`. */
@@ -15,62 +12,42 @@ export interface Route {
   /** Commands from the CLI root (inclusive) to the selected command. */
   nodes: Command[]
   rest: string[]
-  /** Flag tokens that no command on the route declares, as typed (`--nope`, `-x`). */
+  /** Flag tokens the selected command does not declare, as typed (`--nope`, `-x`). */
   unknown: string[]
   /** First positional on a command that has children but matched none of them. */
   unmatched?: string
   version: boolean
 }
 
-export function indexOptions(options: Iterable<ResolvedOption>): OptionIndex {
-  const index: OptionIndex = { long: new Map(), short: new Map() }
-
-  for (const option of options) {
-    if (!index.long.has(option.flag)) {
-      index.long.set(option.flag, option)
-    }
-
-    if (option.short !== undefined && !index.short.has(option.short)) {
-      index.short.set(option.short, option)
-    }
-  }
-
-  return index
-}
-
 /**
  * Finds the selected command and splits argv for the parser in one left-to-right pass.
  *
  * Routing has to know whether a flag consumes the next token: in `cli --config x lint`,
- * `x` is a value, not a command name. Flags of commands on the route are known as soon as
- * the route reaches them; a flag that only a deeper command declares (`cli --dirty lint`)
- * falls back to `treeIndex`, which holds every option in the tree. Whether the flag is
- * actually allowed is checked against the final route afterwards, which is what `unknown`
- * reports.
+ * `x` is a value, not a command name. Flags of the command reached so far are looked up
+ * first; a flag that only a deeper command declares (`cli --config x lint`, where `lint`
+ * declares `--config`) falls back to `treeIndex`, which holds every flag in the tree.
+ * Whether the flag is actually accepted is checked against the selected command afterwards,
+ * which is what `unknown` reports.
  */
-export function resolveRoute(
-  root: Command,
-  argv: readonly string[],
-  resolved: ReadonlyMap<Command, readonly ResolvedOption[]>,
-  treeIndex: OptionIndex,
-  hasVersion: boolean,
-): Route {
+export function resolveRoute(tree: CommandTree, argv: readonly string[]): Route {
+  const { flagsOf, index: treeIndex, root } = tree
+  const hasVersion = tree.version !== undefined
   const nodes: Command[] = [root]
   const parserArgv: string[] = []
   const flagTokens: Array<{ name: string, token: string, type: 'long' | 'short' }> = []
-  const routeOptions: ResolvedOption[] = [...resolved.get(root) ?? []]
-  let routeIndex = indexOptions(routeOptions)
+  let currentFlags = flagsOf(root)
+  let currentIndex = indexFlags(currentFlags)
   let help = false
   let version = false
   let positionalSeen = false
   let unmatched: string | undefined
 
-  const lookupLong = (name: string) => routeIndex.long.get(name) ?? treeIndex.long.get(name)
-  const lookupShort = (name: string) => routeIndex.short.get(name) ?? treeIndex.short.get(name)
+  const lookupLong = (name: string) => currentIndex.long.get(name) ?? treeIndex.long.get(name)
+  const lookupShort = (name: string) => currentIndex.short.get(name) ?? treeIndex.short.get(name)
   const enter = (command: Command) => {
     nodes.push(command)
-    routeOptions.push(...resolved.get(command) ?? [])
-    routeIndex = indexOptions(routeOptions)
+    currentFlags = flagsOf(command)
+    currentIndex = indexFlags(currentFlags)
     positionalSeen = false
   }
 
@@ -97,11 +74,11 @@ export function resolveRoute(
 
       flagTokens.push({ name, token, type: 'long' })
 
-      const option = lookupLong(name) ?? negatedBoolean(lookupLong, name)
+      const flag = lookupLong(name) ?? negatedBoolean(lookupLong, name)
 
-      if (option && option.type !== 'boolean' && equals === -1) {
+      if (flag && flag.type !== 'boolean' && equals === -1) {
         index += 1
-        parserArgv.push(`--${option.flag}=${takeValue(tokens, index, `--${option.flag}`)}`)
+        parserArgv.push(`--${flag.long}=${takeValue(tokens, index, `--${flag.long}`)}`)
       }
       else {
         parserArgv.push(token)
@@ -131,15 +108,16 @@ export function resolveRoute(
 
         flagTokens.push({ name: character, token: `-${character}`, type: 'short' })
 
-        const option = lookupShort(character)
+        const flag = lookupShort(character)
 
-        if (!option) {
+        if (!flag) {
           parserArgv.push(`-${character}`)
           continue
         }
 
-        if (option.type === 'boolean') {
-          parserArgv.push(`--${option.flag}`)
+        // A short alias of `--no-x` turns `x` off, so it has to keep the negation.
+        if (flag.type === 'boolean') {
+          parserArgv.push(flag.negated ? `--no-${flag.long}` : `--${flag.long}`)
           continue
         }
 
@@ -150,7 +128,7 @@ export function resolveRoute(
           index += 1
         }
 
-        parserArgv.push(`--${option.flag}=${attached || takeValue(tokens, index, `-${character}`)}`)
+        parserArgv.push(`--${flag.long}=${attached || takeValue(tokens, index, `-${character}`)}`)
         break
       }
 
@@ -159,7 +137,7 @@ export function resolveRoute(
 
     const current = nodes.at(-1)!
 
-    if (!positionalSeen && current.commands) {
+    if (!positionalSeen && current.children) {
       const next = matchChild(current, token)
 
       if (next) {
@@ -175,7 +153,7 @@ export function resolveRoute(
 
       const target = nodes.at(-1)!
 
-      if (target.commands && !target.run) {
+      if (target.children && !target.action) {
         unmatched ??= token
       }
     }
@@ -191,8 +169,8 @@ export function resolveRoute(
     }
   }
 
-  const routeLong = new Set(routeOptions.map(option => option.flag))
-  const routeShort = new Set(routeOptions.flatMap(option => option.short ?? []))
+  const routeLong = new Set(currentFlags.map(flag => flag.long))
+  const routeShort = new Set(currentFlags.flatMap(flag => flag.short ?? []))
   const unknown = flagTokens
     .filter(({ name, type }) => type === 'long'
       ? !routeLong.has(name) && (!name.startsWith('no-') || !routeLong.has(name.slice(3)))
@@ -203,7 +181,7 @@ export function resolveRoute(
 }
 
 function defaultChild(command: Command): Command | undefined {
-  return command.commands?.find(child => child.default)
+  return command.children?.find(child => child.default)
 }
 
 function isShortFlagToken(token: string): boolean {
@@ -217,7 +195,7 @@ function isShortFlagToken(token: string): boolean {
  * a positional). Returns `undefined` when the token is a positional of `parent` itself.
  */
 function matchChild(parent: Command, token: string): Command[] | undefined {
-  const direct = parent.commands?.find(child => child.name === token || child.alias?.includes(token))
+  const direct = parent.children?.find(child => child.name === token || child.alias?.includes(token))
 
   if (direct) {
     return [direct]
@@ -229,29 +207,29 @@ function matchChild(parent: Command, token: string): Command[] | undefined {
     return undefined
   }
 
-  return [fallback, ...(fallback.commands && !fallback.run ? matchChild(fallback, token) ?? [] : [])]
+  return [fallback, ...(fallback.children && !fallback.action ? matchChild(fallback, token) ?? [] : [])]
 }
 
 function negatedBoolean(
-  lookup: (name: string) => ResolvedOption | undefined,
+  lookup: (name: string) => ResolvedFlag | undefined,
   name: string,
-): ResolvedOption | undefined {
+): ResolvedFlag | undefined {
   if (!name.startsWith('no-')) {
     return undefined
   }
 
-  const option = lookup(name.slice(3))
+  const flag = lookup(name.slice(3))
 
-  return option?.type === 'boolean' ? option : undefined
+  return flag?.type === 'boolean' ? flag : undefined
 }
 
-function takeValue(tokens: readonly string[], index: number, flag: string): string {
+function takeValue(tokens: readonly string[], index: number, spelling: string): string {
   const value = tokens[index]
 
   // A following flag means the value was forgotten; consuming it would silently swallow
   // that flag. Negative numbers and `-` (stdin/stdout by convention) still count as values.
   if (value === undefined || (value.startsWith('-') && value !== '-' && !/^-\d/u.test(value))) {
-    throw new UsageError(`option ${flag} requires a value`)
+    throw new UsageError(`flag ${spelling} requires a value`)
   }
 
   return value

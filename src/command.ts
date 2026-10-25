@@ -1,27 +1,23 @@
 import type { InferArguments } from './arguments'
+import type { FlagsDefinition, InferFlags } from './flags'
 import type { CliIo } from './io'
-import type { InferOptions, OptionsDefinition } from './options'
 
 /**
  * The type-erased form stored in command trees.
  *
- * `run` takes `any` so commands with different option types can share one `commands` array.
+ * `action` takes `any` so commands with different flag types can share one `children` array.
  */
-export interface Command extends Omit<CommandDefinition, 'run'> {
-  run?: (context: CommandContext<any, any, any>) => CommandResult | Promise<CommandResult>
+export interface Command extends Omit<CommandDefinition, 'action'> {
+  action?: (context: CommandContext<any, any>) => CommandResult | Promise<CommandResult>
 }
 
 export interface CommandContext<
-  TOptions extends OptionsDefinition = OptionsDefinition,
+  TFlags extends FlagsDefinition = FlagsDefinition,
   TArguments extends string = string,
-  TGlobals extends Globals = Globals,
 > {
   args: InferArguments<TArguments>
-  /** Values of options declared by the CLI root and every ancestor command. */
-  globals: TGlobals
+  flags: InferFlags<TFlags>
   io: CliIo
-  /** Values of options declared by this command. */
-  options: InferOptions<TOptions>
   /** Names from the root to this command, excluding the CLI name: `['config', 'providers', 'ls']`. */
   path: readonly string[]
   /** Tokens after a bare `--`. They are also bound to positional arguments. */
@@ -30,16 +26,16 @@ export interface CommandContext<
 }
 
 export interface CommandDefinition<
-  TOptions extends OptionsDefinition = OptionsDefinition,
+  TFlags extends FlagsDefinition = FlagsDefinition,
   TArguments extends string = string,
-  TGlobals extends Globals = Globals,
 > {
+  action?: (context: CommandContext<TFlags, TArguments>) => CommandResult | Promise<CommandResult>
   alias?: readonly string[]
-  /** Accept flags no command on the path declares, instead of failing with a usage error. */
-  allowUnknownOptions?: boolean
+  /** Accept flags this command does not declare, instead of failing with a usage error. */
+  allowUnknownFlags?: boolean
   /** Positional argument pattern, such as `<source> [...rest]`. */
-  args?: TArguments
-  commands?: readonly Command[]
+  arguments?: TArguments
+  children?: readonly Command[]
   /**
    * Run this child when the parent receives no matching subcommand name.
    *
@@ -48,49 +44,22 @@ export interface CommandDefinition<
   default?: boolean
   description: string
   examples?: readonly string[]
+  /**
+   * Flags this command accepts. Nothing is inherited from parent commands: spread a shared
+   * `defineFlags` set into every command that should accept it.
+   */
+  flags?: TFlags
   /** Longer help paragraph. Falls back to `description`. */
   help?: string
   name: string
-  /**
-   * Options for this command.
-   *
-   * On a command that has `commands`, these options are also accepted by every descendant
-   * and reach them through `context.globals`.
-   */
-  options?: TOptions
-  run?: (context: CommandContext<TOptions, TArguments, TGlobals>) => CommandResult | Promise<CommandResult>
 }
 
-/** A command returns its exit code; returning nothing means success. */
+/** An action returns its exit code; returning nothing means success. */
 export type CommandResult = number | void
 
-export type Globals = Readonly<Record<string, unknown>>
-
 export function defineCommand<
-  const TOptions extends OptionsDefinition = Record<never, never>,
+  const TFlags extends FlagsDefinition = [],
   const TArguments extends string = '',
->(command: CommandDefinition<TOptions, TArguments>): Command {
+>(command: CommandDefinition<TFlags, TArguments>): Command {
   return command
-}
-
-/**
- * Declares options shared by the whole CLI and a `defineCommand` that sees them typed.
- *
- * ```ts
- * export const globals = defineGlobalOptions({ config: { type: 'string', description: '...' } })
- * export const lint = globals.defineCommand({ name: 'lint', run: ({ globals }) => globals.config })
- * createCli({ name: 'alint', options: globals.options, commands: [lint] })
- * ```
- */
-export function defineGlobalOptions<const TGlobalOptions extends OptionsDefinition>(options: TGlobalOptions) {
-  return {
-    defineCommand<
-      const TOptions extends OptionsDefinition = Record<never, never>,
-      const TArguments extends string = '',
-    >(command: CommandDefinition<TOptions, TArguments, InferOptions<TGlobalOptions>>,
-    ): Command {
-      return command
-    },
-    options,
-  }
 }

@@ -1,56 +1,64 @@
-import { toStandardJsonSchema as s } from '@valibot/to-json-schema'
 import { describe, expectTypeOf, it } from 'vitest'
 
 import * as v from 'valibot'
 
-import { defineCommand, defineGlobalOptions } from './command'
+import { defineCommand } from './command'
+import { defineFlags } from './flags'
 
 describe('command context types', () => {
-  it('infers options from their schemas', () => {
+  it('infers flags from their spellings, defaults, and schemas', () => {
+    const sharedFlags = defineFlags([
+      { description: '', flag: '-c, --config <path>' },
+      { description: '', flag: '--no-cache' },
+    ])
+
     defineCommand({
+      action: ({ flags }) => {
+        expectTypeOf(flags).toEqualTypeOf<{
+          cache: boolean
+          config: string | undefined
+          dirty: boolean
+          format: 'json' | 'stylish'
+          level: 'high' | 'low' | undefined
+          name: string | undefined
+          port: number
+          rule: string[]
+          timeoutMs: number | undefined
+        }>()
+      },
       description: '',
+      flags: [
+        ...sharedFlags,
+        { description: '', flag: '--dirty' },
+        { default: 'stylish', description: '', flag: '-f, --format <stylish|json>' },
+        { description: '', flag: '--level <low|high>' },
+        { description: '', flag: '--name <name>' },
+        { description: '', flag: '--port <port>', schema: v.pipe(v.string(), v.toNumber()) },
+        { description: '', flag: '--rule <pattern...>' },
+        { description: '', flag: '--timeout-ms <ms>', schema: v.optional(v.pipe(v.string(), v.toNumber())) },
+      ],
       name: 'lint',
-      options: {
-        dirty: { schema: s(v.optional(v.boolean(), false)) },
-        format: { schema: s(v.optional(v.picklist(['stylish', 'json']), 'stylish')) },
-        name: { schema: s(v.optional(v.string())) },
-        port: { schema: s(v.pipe(v.string(), v.transform(Number))) },
-        rule: { schema: s(v.optional(v.array(v.string()), [])) },
-        timeoutMs: { schema: s(v.optional(v.number())) },
-      },
-      run: ({ options }) => {
-        expectTypeOf(options.dirty).toEqualTypeOf<boolean>()
-        expectTypeOf(options.format).toEqualTypeOf<'json' | 'stylish'>()
-        expectTypeOf(options.name).toEqualTypeOf<string | undefined>()
-        expectTypeOf(options.rule).toEqualTypeOf<string[]>()
-        expectTypeOf(options.timeoutMs).toEqualTypeOf<number | undefined>()
-        expectTypeOf(options.port).toEqualTypeOf<number>()
-      },
     })
   })
 
   it('infers arguments from the pattern', () => {
     defineCommand({
-      args: '<report-path> [target] [...files]',
-      description: '',
-      name: 'compare',
-      run: ({ args }) => {
+      action: ({ args }) => {
         expectTypeOf(args).toEqualTypeOf<{ files: string[], reportPath: string, target?: string }>()
       },
+      arguments: '<report-path> [target] [...files]',
+      description: '',
+      name: 'compare',
     })
   })
 
-  it('types globals declared through defineGlobalOptions', () => {
-    const globals = defineGlobalOptions({
-      config: { schema: s(v.optional(v.string())) },
-    })
-
-    globals.defineCommand({
-      description: '',
-      name: 'lint',
-      run: ({ globals }) => {
-        expectTypeOf(globals.config).toEqualTypeOf<string | undefined>()
+  it('gives a command without flags an empty flags object', () => {
+    defineCommand({
+      action: ({ flags }) => {
+        expectTypeOf(flags).toEqualTypeOf<Record<never, never>>()
       },
+      description: '',
+      name: 'noop',
     })
   })
 })
