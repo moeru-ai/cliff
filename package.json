@@ -1,0 +1,88 @@
+{
+  "name": "@moeru/cliff",
+  "type": "module",
+  "version": "0.0.0",
+  "packageManager": "pnpm@11.18.0",
+  "description": "Command tree orchestration for Node.js CLIs, with pluggable cac, meow, and node:util argv parsers",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/moeru-ai/cliff.git"
+  },
+  "keywords": [
+    "cli",
+    "command",
+    "subcommand",
+    "argv",
+    "cac",
+    "meow"
+  ],
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.mts",
+      "default": "./dist/index.mjs"
+    },
+    "./parsers/cac": {
+      "types": "./dist/parsers/cac.d.mts",
+      "default": "./dist/parsers/cac.mjs"
+    },
+    "./parsers/meow": {
+      "types": "./dist/parsers/meow.d.mts",
+      "default": "./dist/parsers/meow.mjs"
+    },
+    "./parsers/node": {
+      "types": "./dist/parsers/node.d.mts",
+      "default": "./dist/parsers/node.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22.4.0"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "lint": "eslint --cache .",
+    "lint:fix": "eslint --cache . --fix",
+    "publint": "publint",
+    "release": "bumpp"
+  },
+  "peerDependencies": {
+    "cac": "^7.0.0",
+    "meow": "^14.1.0"
+  },
+  "peerDependenciesMeta": {
+    "cac": {
+      "optional": true
+    },
+    "meow": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "@moeru/std": "^0.1.0-beta.20",
+    "@standard-schema/spec": "^1.1.0"
+  },
+  "devDependencies": {
+    "@antfu/eslint-config": "^9.2.0",
+    "@moeru/eslint-config": "^0.1.0-beta.20",
+    "@types/json-schema": "^7.0.15",
+    "@types/node": "^26.1.2",
+    "@valibot/to-json-schema": "^1.8.0",
+    "bumpp": "^12.1.1",
+    "cac": "^7.0.0",
+    "eslint": "^10.8.0",
+    "meow": "^14.1.0",
+    "publint": "^0.3.22",
+    "tsdown": "^0.22.14",
+    "typescript": "^6.0.3",
+    "valibot": "^1.5.0",
+    "vitest": "^4.1.10"
+  }
+}

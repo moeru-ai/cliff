@@ -1,0 +1,11 @@
+.DS_Store
+node_modules
+dist
+coverage/
+*.log
+*.local
+*.local.*
+.eslintcache
+**/*.tsbuildinfo
+.claude/worktrees/
+.tmp/
