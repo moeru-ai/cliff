@@ -1,13 +1,50 @@
-# @moeru/cliff
+# `@moeru/cliff`
 
 Command tree orchestration for Node.js CLIs. You declare commands with flags written the way help shows them (`-c, --config <path>`), and cliff infers their types from those strings. cliff routes argv, renders help, reports usage errors, and calls your action with an injected `io`. Flags can carry any [Standard Schema](https://standardschema.dev) (Valibot, Zod, ArkType, ...) for validation and transforms. The actual flag parsing is delegated to a pluggable parser: `node:util` `parseArgs` (default), [cac](https://github.com/cacjs/cac), or [meow](https://github.com/sindresorhus/meow).
 
-## Why
-
 cac and meow parse flags well, but nested subcommands, per-command help, exit codes, and testable I/O are left to every project. In practice each CLI grows its own layer on top: hand-written dispatch, help callbacks, hard-coded lists of value-taking flags, `console.log` interception. cliff is that layer, written once.
 
-## Usage
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+## Table of Contents
 
+- [Installation and Usage](#installation-and-usage)
+  - [Install](#install)
+  - [Define commands](#define-commands)
+  - [Run](#run)
+  - [Help and usage errors](#help-and-usage-errors)
+  - [Test](#test)
+  - [Cancel](#cancel)
+  - [Use another parser](#use-another-parser)
+- [Flags](#flags)
+- [Concepts](#concepts)
+- [Parsers](#parsers)
+- [API at a glance](#api-at-a-glance)
+- [When to use](#when-to-use)
+- [When not to use](#when-not-to-use)
+- [Documentation automation](#documentation-automation)
+- [Development](#development)
+- [Status](#status)
+- [License](#license)
+
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+
+## Installation and Usage
+
+### Install
+
+```sh
+npm install @moeru/cliff
+pnpm add @moeru/cliff
+```
+
+cliff needs Node.js 22.4 or later. cac and meow are optional peer dependencies: install one only to use its parser.
+
+### Define commands
+
+A command is a name, a description, its flags and arguments, and either an `action` or `children`. The types of `args` and `flags` come from the spellings:
+
+<!-- docs:example examples/tool.ts -->
 ```ts
 import { createCli, defineCommand, defineFlags } from '@moeru/cliff'
 
@@ -24,7 +61,8 @@ const lint = defineCommand({
     // args.files: string[]
     // flags.config: string | undefined, flags.cache: boolean, flags.dirty: boolean
     // flags.format: 'stylish' | 'json', flags.rule: string[], flags.retries: number | undefined
-    io.stdout.write(`${args.files.join(', ')}\n`)
+    signal.throwIfAborted()
+    io.stdout.write(`linting ${args.files.join(', ')} with ${flags.format}\n`)
     return 0
   },
   arguments: '[...files]',
@@ -41,7 +79,9 @@ const lint = defineCommand({
 })
 
 const ls = defineCommand({
-  action: ({ args, flags }) => {},
+  action: ({ args, flags, io }) => {
+    io.stdout.write(`${args.provider ?? 'all providers'} (${flags.local ? 'project' : 'global'})\n`)
+  },
   arguments: '[provider]',
   description: 'List providers',
   flags: [...sharedFlags, { description: 'Use project scope', flag: '-l, --local' }],
@@ -55,35 +95,118 @@ export const cli = createCli({
   name: 'tool',
   version: '1.0.0',
 })
-
-// bin entry
-await cli.run()
 ```
+<!-- /docs:example -->
 
-To use another parser, pass it to `createCli`:
+### Run
 
+`cli.run()` is the process entrypoint. Call it once from the bin file:
+
+<!-- docs:example examples/bin.ts -->
 ```ts
-import { cacParser } from '@moeru/cliff/parsers/cac'
+import { cli } from './tool.ts'
 
-createCli({ /* ... */ parser: cacParser })
+cli.run()
 ```
+<!-- /docs:example -->
 
-### Testing
+It passes `process.argv.slice(2)` and the real stdio, and sets `process.exitCode`. On the first SIGINT/SIGTERM it aborts `context.signal`; an action that rejects with the abort reason exits with `128 + signal number` (130 for Ctrl+C) and no message. If an action throws anything else, it prints `<name>: <message>` and exits with code 1.
+
+### Help and usage errors
+
+cliff renders help for every command from the definitions, so it cannot drift from what the command accepts:
+
+<!-- docs:output tool --help -->
+```console
+$ tool --help
+An example tool.
+
+Usage
+  $ tool <command> [flags]
+
+Commands
+  providers <command>  Manage providers
+  lint [...files]      Lint files (default)
+
+Flags
+  -h, --help     Show help
+  -v, --version  Show version
+```
+<!-- /docs:output -->
+
+<!-- docs:output tool lint --help -->
+```console
+$ tool lint --help
+Lint files
+
+Usage
+  $ tool lint [...files] [flags]
+
+Flags
+  -c, --config <path>          Config file
+      --no-cache               Disable the cache
+      --dirty                  Lint changed files only
+  -f, --format <stylish|json>  Reporter (default: stylish)
+      --rule <pattern...>      Only run matching rules (repeatable)
+      --retries <n>            Retry count
+  -h, --help                   Show help
+  -v, --version                Show version
+```
+<!-- /docs:output -->
+
+Usage mistakes go to stderr with a `--help` hint and exit with code 2. Choices and schemas are checked before the action runs:
+
+<!-- docs:output tool lint --format xml -->
+```console
+$ tool lint --format xml
+error: flag --format must be one of stylish, json, received "xml"
+
+Run `tool lint --help` for usage.
+```
+<!-- /docs:output -->
+
+<!-- docs:output tool --retries 1.5 -->
+```console
+$ tool --retries 1.5
+error: flag --retries: Invalid integer: Received 1.5
+
+Run `tool lint --help` for usage.
+```
+<!-- /docs:output -->
+
+<!-- docs:output tool providers -->
+```console
+$ tool providers
+error: missing command for "tool providers"
+
+Commands
+  ls [provider]  List providers
+
+Run `tool providers --help` for usage.
+```
+<!-- /docs:output -->
+
+### Test
 
 `cli.execute(argv, io)` touches no `process` state and resolves to the exit code. `io` only needs `stdout` and `stderr`; `createMemoryIo` from `@moeru/cliff/testing` captures both:
 
+<!-- docs:example examples/tool.test.ts -->
 ```ts
 import { createMemoryIo } from '@moeru/cliff/testing'
+import { expect, it } from 'vitest'
 
-const io = createMemoryIo({ cwd: '/project' })
+import { cli } from './tool.ts'
 
-expect(await cli.execute(['providers', 'ls', 'openrouter'], io)).toBe(0)
-expect(io.stdout.text()).toContain('openrouter')
+it('lists providers in the global scope', async () => {
+  const io = createMemoryIo({ cwd: '/project' })
+
+  expect(await cli.execute(['providers', 'ls', 'openrouter'], io)).toBe(0)
+  expect(io.stdout.text()).toBe('openrouter (global)\n')
+})
 ```
+<!-- /docs:example -->
 
-`cli.run()` is the only part that binds to the process. It passes `process.argv.slice(2)` and the real stdio, and sets `process.exitCode`. On the first SIGINT/SIGTERM it aborts `context.signal`; an action that rejects with the abort reason exits with `128 + signal number` (130 for Ctrl+C) and no message. If an action throws anything else, it prints `<name>: <message>` and exits with code 1.
-
-### Cancellation
+### Cancel
 
 Both `cli.run({ signal })` and `cli.execute(argv, io, { signal })` accept an `AbortSignal`, and `context.signal` is always set. Under `run`, the caller's signal is combined with SIGINT/SIGTERM:
 
@@ -92,6 +215,16 @@ await cli.run({ signal: AbortSignal.timeout(30_000) })
 ```
 
 An aborted signal stops cliff before the action runs and rejects `execute` with `signal.reason`. Abort is checked between flag validations, but an async schema that is already running cannot be cancelled, because Standard Schema's `validate` takes no signal. Once the action runs, stopping is up to it: pass `signal` to `fetch`, child processes, and timers, or call `signal.throwIfAborted()`.
+
+### Use another parser
+
+Pass it to `createCli`:
+
+```ts
+import { cacParser } from '@moeru/cliff/parsers/cac'
+
+createCli({ /* ... */ parser: cacParser })
+```
 
 ## Flags
 
@@ -107,7 +240,7 @@ The flag spelling decides how the flag is parsed and what type the action receiv
 
 Keys are the camelCase long name: `--timeout-ms` becomes `timeoutMs`. `default` replaces the absent value and removes `undefined` from the type.
 
-`schema` is any Standard Schema. It receives the parsed value, or the default when the flag is absent. Its output is what the action sees, and the action's type comes from it, as in `v.pipe(v.string(), v.toNumber())`. A failure is a usage error: `error: flag --retries: Invalid integer: Received 1.5`.
+`schema` is any Standard Schema. It receives the parsed value, or the default when the flag is absent. Its output is what the action sees, and the action's type comes from it, as in `v.pipe(v.string(), v.toNumber())`. A failure is a usage error, as shown in [Help and usage errors](#help-and-usage-errors).
 
 Flags are not inherited. Each command accepts exactly the flags it declares, so shared flags are spread in with `defineFlags`. A shared flag may still be typed before the command name (`tool -c x providers ls`).
 
@@ -134,6 +267,22 @@ cliff routes, validates, and normalizes. A parser only splits one command's argv
 
 An unknown flag only reaches a parser when the command sets `allowUnknownFlags`. In that case, parsers may disagree on whether `--unknown value` consumes `value`.
 
+## API at a glance
+
+| API | What it does | Section |
+|---|---|---|
+| `createCli(definition)` | Validates the command tree and returns a `Cli`. `parser` and `version` are set here. | [Define commands](#define-commands) |
+| `defineCommand(definition)` | Declares a command: `name`, `description`, `flags`, `arguments`, `action` or `children`, `alias`, `default` | [Define commands](#define-commands) |
+| `defineFlags(flags)` | Keeps a shared flag set typed so it can be spread into several commands | [Flags](#flags) |
+| `cli.run({ argv?, signal? })` | Runs as the process entrypoint and sets `process.exitCode` | [Run](#run) |
+| `cli.execute(argv, io, { signal? })` | Runs one invocation without `process` and resolves to the exit code | [Test](#test) |
+| `context` in `action` | `args`, `flags`, `io`, `path`, `rest`, `signal` | [Define commands](#define-commands) |
+| `UsageError` | Thrown by an action for a usage mistake the definitions cannot express; exits 2 | [Concepts](#concepts) |
+| `DefinitionError` | Thrown by `createCli` for a broken tree | [Concepts](#concepts) |
+| `createMemoryIo(overrides?)` from `@moeru/cliff/testing` | In-memory `io` whose `stdout.text()` and `stderr.text()` return what was written | [Test](#test) |
+| `nodeParser`, `cacParser`, `meowParser` from `@moeru/cliff/parsers/*` | The argv parsers | [Parsers](#parsers) |
+| `ArgvParser` | The contract a custom parser implements | [Parsers](#parsers) |
+
 ## When to use
 
 - A Node.js CLI with nested subcommands, shared flags, and per-command help.
@@ -147,6 +296,16 @@ An unknown flag only reaches a parser when the command sets `allowUnknownFlags`.
 - Interactive prompts, spinners, or TUI layout. cliff only ends where a command's `action` begins.
 - Shell completion generation or plugin auto-discovery. These are not implemented yet.
 
+## Documentation automation
+
+The table of contents comes from `doctoc`. The example code and every help or error output in this README come from [`examples/`](./examples): they are type-checked with the source, and the outputs are what the example CLI prints when it runs. Run this after you change a heading, `examples/`, or anything that changes output:
+
+```sh
+pnpm docs:update
+```
+
+`docs:update` refreshes the table of contents, builds the package, and then rewrites the regions between `<!-- docs:example <file> -->` or `<!-- docs:output <argv> -->` and their closing comments. Do not edit those regions by hand. `pnpm docs:check` fails when they are out of date.
+
 ## Development
 
 ```sh
@@ -154,5 +313,15 @@ pnpm install
 pnpm test:run   # unit, parser contract, and type tests
 pnpm typecheck
 pnpm lint
+pnpm spellcheck
 pnpm build
+node examples/bin.ts --help   # the example CLI, after a build
 ```
+
+## Status
+
+cliff is at 0.x and is not published to npm yet. The API can still change between minor versions.
+
+## License
+
+[MIT](./LICENSE)

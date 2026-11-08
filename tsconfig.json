@@ -3,8 +3,15 @@
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    // Examples import the package by name, as users do. Type-check them against the source;
+    // at run time Node resolves the name to `dist` through the package's own `exports`.
+    "paths": {
+      "@moeru/cliff": ["./src/index.ts"],
+      "@moeru/cliff/*": ["./src/*.ts"]
+    },
     "resolveJsonModule": true,
     "types": ["node"],
+    "allowImportingTsExtensions": true,
     "strict": true,
     "noFallthroughCasesInSwitch": true,
     "noUnusedLocals": true,
@@ -15,6 +22,6 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true
   },
-  "include": ["src", "*.config.ts"],
+  "include": ["src", "examples", "scripts", "*.config.ts"],
   "exclude": ["node_modules", "dist"]
 }

@@ -19,7 +19,9 @@ jobs:
           cache: pnpm
       - run: pnpm install
       - run: pnpm lint
+      - run: pnpm spellcheck
       - run: pnpm typecheck
       - run: pnpm build
       - run: pnpm publint
       - run: pnpm test:run
+      - run: pnpm docs:check
