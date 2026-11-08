@@ -21,6 +21,8 @@
 
 - `pnpm test:run` runs unit, parser-contract (`describe.each` over every parser), and `*.test-d.ts` type tests.
 - `pnpm typecheck`, `pnpm lint` / `pnpm lint:fix`, `pnpm build`, `pnpm publint`.
+- `pnpm spellcheck` runs cspell. Add real project words to `cspell.config.yaml`.
+- `pnpm docs:update` refreshes the README table of contents and the regions generated from `examples/`. `pnpm docs:check` fails when they are stale.
 - Always run `pnpm typecheck`, `pnpm lint`, and `pnpm test:run` after finishing a task.
 
 ## Development Practices
@@ -67,4 +69,4 @@
 
 - Branch naming `username/feat/short-name`; Conventional Commits (`feat(parsers): ...`); gitmoji is prohibited.
 - Summarize changes, how they were tested (commands), and follow-ups.
-- Keep `README.md` current: what it does, how to use it, when to use it, when not to use it.
+- Keep `README.md` current: what it does, how to use it, when to use it, when not to use it. Write code samples and outputs in `examples/` and embed them with `<!-- docs:example <file> -->` or `<!-- docs:output <argv> -->`, never by hand.
