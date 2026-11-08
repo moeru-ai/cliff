@@ -15,7 +15,7 @@ export interface MemoryWritable extends CliWritable {
  *
  * ```ts
  * const io = createMemoryIo()
- * expect(await cli.run(['lint', 'src'], io)).toBe(0)
+ * expect(await cli.execute(['lint', 'src'], io)).toBe(0)
  * expect(io.stdout.text()).toContain('src')
  * ```
  *

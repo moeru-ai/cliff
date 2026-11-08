@@ -19,8 +19,15 @@ export type Invocation
     | { kind: 'help', text: string }
     | { kind: 'version', text: string }
 
-export async function resolveInvocation(tree: CommandTree, parser: ArgvParser, argv: readonly string[]): Promise<Invocation> {
+export async function resolveInvocation(
+  tree: CommandTree,
+  parser: ArgvParser,
+  argv: readonly string[],
+  signal?: AbortSignal,
+): Promise<Invocation> {
   let usage = tree.root.name
+
+  signal?.throwIfAborted()
 
   try {
     const route = resolveRoute(tree, argv)
@@ -63,6 +70,11 @@ export async function resolveInvocation(tree: CommandTree, parser: ArgvParser, a
 
     for (const flag of flags) {
       values[flag.key] = await validateFlagValue(flag, normalizeFlagValue(flag, parsed.flags[flag.key]))
+
+      // NOTICE: Standard Schema's `validate(value)` takes no signal, so an async schema that is
+      // already running cannot be cancelled. Checking between flags is the earliest point an
+      // abort can stop resolution.
+      signal?.throwIfAborted()
     }
 
     return {

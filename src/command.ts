@@ -22,7 +22,8 @@ export interface CommandContext<
   path: readonly string[]
   /** Tokens after a bare `--`. They are also bound to positional arguments. */
   rest: readonly string[]
-  signal?: AbortSignal
+  /** Aborted when the caller cancels: `execute`'s `signal`, or SIGINT/SIGTERM under `run`. Never aborts otherwise. */
+  signal: AbortSignal
 }
 
 export interface CommandDefinition<

@@ -9,7 +9,7 @@ cac and meow parse flags well, but nested subcommands, per-command help, exit co
 ## Usage
 
 ```ts
-import { createCli, defineCommand, defineFlags, runMain } from '@moeru/cliff'
+import { createCli, defineCommand, defineFlags } from '@moeru/cliff'
 
 import * as v from 'valibot'
 
@@ -57,7 +57,7 @@ export const cli = createCli({
 })
 
 // bin entry
-await runMain(cli)
+await cli.run()
 ```
 
 To use another parser, pass it to `createCli`:
@@ -70,18 +70,28 @@ createCli({ /* ... */ parser: cacParser })
 
 ### Testing
 
-`cli.run(argv, io)` touches no `process` state and resolves to the exit code. `io` only needs `stdout` and `stderr`; `createMemoryIo` from `@moeru/cliff/testing` captures both:
+`cli.execute(argv, io)` touches no `process` state and resolves to the exit code. `io` only needs `stdout` and `stderr`; `createMemoryIo` from `@moeru/cliff/testing` captures both:
 
 ```ts
 import { createMemoryIo } from '@moeru/cliff/testing'
 
 const io = createMemoryIo({ cwd: '/project' })
 
-expect(await cli.run(['providers', 'ls', 'openrouter'], io)).toBe(0)
+expect(await cli.execute(['providers', 'ls', 'openrouter'], io)).toBe(0)
 expect(io.stdout.text()).toContain('openrouter')
 ```
 
-`runMain(cli)` is the only part that binds to the process. It passes `process.argv.slice(2)` and the real stdio, and sets `process.exitCode`. On the first SIGINT/SIGTERM it aborts `context.signal`. If an action throws, it prints `<name>: <message>` and exits with code 1.
+`cli.run()` is the only part that binds to the process. It passes `process.argv.slice(2)` and the real stdio, and sets `process.exitCode`. On the first SIGINT/SIGTERM it aborts `context.signal`; an action that rejects with the abort reason exits with `128 + signal number` (130 for Ctrl+C) and no message. If an action throws anything else, it prints `<name>: <message>` and exits with code 1.
+
+### Cancellation
+
+Both `cli.run({ signal })` and `cli.execute(argv, io, { signal })` accept an `AbortSignal`, and `context.signal` is always set. Under `run`, the caller's signal is combined with SIGINT/SIGTERM:
+
+```ts
+await cli.run({ signal: AbortSignal.timeout(30_000) })
+```
+
+An aborted signal stops cliff before the action runs and rejects `execute` with `signal.reason`. Abort is checked between flag validations, but an async schema that is already running cannot be cancelled, because Standard Schema's `validate` takes no signal. Once the action runs, stopping is up to it: pass `signal` to `fetch`, child processes, and timers, or call `signal.throwIfAborted()`.
 
 ## Flags
 

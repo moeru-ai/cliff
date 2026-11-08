@@ -65,7 +65,7 @@ describe.each([nodeParser, cacParser, meowParser])('parser contract: $name', (pa
   async function invoke(argv: string[]) {
     const run = vi.fn<Run>(() => 0)
     const io = createMemoryIo()
-    const exitCode = await createSampleCli(parser, run).run(argv, io)
+    const exitCode = await createSampleCli(parser, run).execute(argv, io)
 
     return { context: run.mock.calls[0]?.[0], exitCode, io, run }
   }
@@ -160,7 +160,7 @@ describe.each([nodeParser, cacParser, meowParser])('parser contract: $name', (pa
 describe('createCli', () => {
   it('reports an unknown subcommand with the available commands', async () => {
     const io = createMemoryIo()
-    const exitCode = await createSampleCli(nodeParser, () => 0).run(['config', 'nope'], io)
+    const exitCode = await createSampleCli(nodeParser, () => 0).execute(['config', 'nope'], io)
 
     expect(exitCode).toBe(2)
     expect(io.stderr.text()).toBe([
@@ -176,7 +176,7 @@ describe('createCli', () => {
 
   it('reports a missing subcommand', async () => {
     const io = createMemoryIo()
-    const exitCode = await createSampleCli(nodeParser, () => 0).run(['config'], io)
+    const exitCode = await createSampleCli(nodeParser, () => 0).execute(['config'], io)
 
     expect(exitCode).toBe(2)
     expect(io.stderr.text().split('\n')[0]).toBe('error: missing command for "alint config"')
@@ -185,7 +185,7 @@ describe('createCli', () => {
   it('prints only the version string', async () => {
     const io = createMemoryIo()
 
-    expect(await createSampleCli(nodeParser, () => 0).run(['-v'], io)).toBe(0)
+    expect(await createSampleCli(nodeParser, () => 0).execute(['-v'], io)).toBe(0)
     expect(io.stdout.text()).toBe('1.2.3\n')
   })
 
@@ -193,7 +193,7 @@ describe('createCli', () => {
     const io = createMemoryIo()
     const run = vi.fn<Run>()
 
-    expect(await createSampleCli(nodeParser, run).run(['--help'], io)).toBe(0)
+    expect(await createSampleCli(nodeParser, run).execute(['--help'], io)).toBe(0)
     expect(run).not.toHaveBeenCalled()
     expect(io.stdout.text()).toMatchInlineSnapshot(`
       "AI-assisted linting.
@@ -215,7 +215,7 @@ describe('createCli', () => {
   it('renders leaf help with flags as written', async () => {
     const io = createMemoryIo()
 
-    await createSampleCli(nodeParser, () => 0).run(['config', 'providers', 'ls', '-h'], io)
+    await createSampleCli(nodeParser, () => 0).execute(['config', 'providers', 'ls', '-h'], io)
 
     expect(io.stdout.text()).toMatchInlineSnapshot(`
       "List providers
@@ -236,14 +236,14 @@ describe('createCli', () => {
   it('notes defaults and repeatable flags in help', async () => {
     const io = createMemoryIo()
 
-    await createSampleCli(nodeParser, () => 0).run(['lint', '--help'], io)
+    await createSampleCli(nodeParser, () => 0).execute(['lint', '--help'], io)
 
     expect(io.stdout.text()).toContain('  -f, --format <stylish|json>  Reporter (default: stylish)\n')
     expect(io.stdout.text()).toContain('      --rule <pattern...>      Rule filter (repeatable)\n')
   })
 
   it('returns the exit code of the command', async () => {
-    const exitCode = await createSampleCli(nodeParser, () => 3).run(['src'], createMemoryIo())
+    const exitCode = await createSampleCli(nodeParser, () => 3).execute(['src'], createMemoryIo())
 
     expect(exitCode).toBe(3)
   })
@@ -252,7 +252,7 @@ describe('createCli', () => {
     const io = createMemoryIo()
     const exitCode = await createSampleCli(nodeParser, () => {
       throw new UsageError('--dirty does not accept files')
-    }).run(['src'], io)
+    }).execute(['src'], io)
 
     expect(exitCode).toBe(2)
     expect(io.stderr.text()).toBe('error: --dirty does not accept files\n\nRun `alint lint --help` for usage.\n')
@@ -263,16 +263,7 @@ describe('createCli', () => {
       throw new Error('boom')
     })
 
-    await expect(cli.run(['src'], createMemoryIo())).rejects.toThrow('boom')
-  })
-
-  it('passes the abort signal to the command', async () => {
-    const run = vi.fn<Run>()
-    const controller = new AbortController()
-
-    await createSampleCli(nodeParser, run).run(['src'], createMemoryIo(), { signal: controller.signal })
-
-    expect(run.mock.calls[0]?.[0].signal).toBe(controller.signal)
+    await expect(cli.execute(['src'], createMemoryIo())).rejects.toThrow('boom')
   })
 
   it('accepts undeclared flags when the command allows them', async () => {
@@ -285,7 +276,7 @@ describe('createCli', () => {
       name: 'tool',
     })
 
-    expect(await cli.run(['--extra', 'a'], createMemoryIo())).toBe(0)
+    expect(await cli.execute(['--extra', 'a'], createMemoryIo())).toBe(0)
     expect(run.mock.calls[0]?.[0].args).toEqual({ files: ['a'] })
   })
 })
@@ -309,6 +300,60 @@ describe('createCli definition checks', () => {
   })
 })
 
+describe('abort signal', () => {
+  it('passes the abort signal to the command', async () => {
+    const run = vi.fn<Run>()
+    const controller = new AbortController()
+
+    await createSampleCli(nodeParser, run).execute(['src'], createMemoryIo(), { signal: controller.signal })
+
+    expect(run.mock.calls[0]?.[0].signal).toBe(controller.signal)
+  })
+
+  it('gives the command a signal when the caller passes none', async () => {
+    const run = vi.fn<Run>()
+
+    await createSampleCli(nodeParser, run).execute(['src'], createMemoryIo())
+
+    expect(run.mock.calls[0]?.[0].signal).toBeInstanceOf(AbortSignal)
+    expect(run.mock.calls[0]?.[0].signal.aborted).toBe(false)
+  })
+
+  it('rejects with the abort reason before running an aborted invocation', async () => {
+    const run = vi.fn<Run>()
+    const io = createMemoryIo()
+    const reason = new Error('cancelled')
+
+    await expect(createSampleCli(nodeParser, run).execute(['src'], io, { signal: AbortSignal.abort(reason) })).rejects.toBe(reason)
+    expect(run).not.toHaveBeenCalled()
+    expect(io.stdout.text()).toBe('')
+    expect(io.stderr.text()).toBe('')
+  })
+
+  it('does not run the command when aborted during flag validation', async () => {
+    const run = vi.fn<Run>()
+    const controller = new AbortController()
+    const reason = new Error('cancelled')
+    const cli = createCli({
+      action: run,
+      description: '',
+      flags: [{
+        default: 'a',
+        description: 'Name',
+        flag: '--name <name>',
+        schema: v.pipeAsync(v.string(), v.checkAsync(async () => {
+          controller.abort(reason)
+          return true
+        })),
+      }],
+      name: 'tool',
+    })
+
+    await expect(cli.execute([], createMemoryIo(), { signal: controller.signal })).rejects.toBe(reason)
+    expect(run).not.toHaveBeenCalled()
+  })
+})
+
 describe('flag schemas', () => {
   it('passes the default through the schema', async () => {
     const run = vi.fn<Run>()
@@ -319,7 +364,7 @@ describe('flag schemas', () => {
       name: 'serve',
     })
 
-    await cli.run([], createMemoryIo())
+    await cli.execute([], createMemoryIo())
 
     expect(run.mock.calls[0]?.[0].flags).toEqual({ port: 8080 })
   })
@@ -333,7 +378,7 @@ describe('flag schemas', () => {
       name: 'serve',
     })
 
-    expect(await cli.run(['--port', '1', '--port', '2.5'], io)).toBe(2)
+    expect(await cli.execute(['--port', '1', '--port', '2.5'], io)).toBe(2)
     expect(io.stderr.text().split('\n')[0]).toBe('error: flag --port: Invalid integer: Received 2.5')
   })
 })
