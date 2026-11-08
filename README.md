@@ -1,4 +1,10 @@
-# `@moeru/cliff`
+# Cliff
+
+[![npm version][npmx-version-src]][npmx-version-href]
+[![npm downloads][npmx-downloads-src]][npmx-downloads-href]
+[![bundle][bundle-src]][bundle-href]
+[![License][license-src]][license-href]
+[![JSDocs][jsdocs-src]][jsdocs-href]
 
 Command tree orchestration for Node.js CLIs. You declare commands with flags written the way help shows them (`-c, --config <path>`), and cliff infers their types from those strings. cliff routes argv, renders help, reports usage errors, and calls your action with an injected `io`. Flags can carry any [Standard Schema](https://standardschema.dev) (Valibot, Zod, ArkType, ...) for validation and transforms. The actual flag parsing is delegated to a pluggable parser: `node:util` `parseArgs` (default), [cac](https://github.com/cacjs/cac), or [meow](https://github.com/sindresorhus/meow).
 
@@ -325,3 +331,14 @@ cliff is at 0.x and is not published to npm yet. The API can still change betwee
 ## License
 
 [MIT](./LICENSE)
+
+[npmx-version-src]: https://npmx.dev/api/registry/badge/version/@moeru/cliff
+[npmx-version-href]: https://npmx.dev/@moeru/cliff
+[npmx-downloads-src]: https://npmx.dev/api/registry/badge/downloads-month/@moeru/cliff
+[npmx-downloads-href]: https://npmx.dev/@moeru/cliff
+[bundle-src]: https://npmx.dev/api/registry/badge/size/@moeru/cliff
+[bundle-href]: https://bundlephobia.com/result?p=@moeru/cliff
+[license-src]: https://npmx.dev/api/registry/badge/license/@moeru/cliff
+[license-href]: https://github.com/moeru-ai/cliff/blob/main/LICENSE
+[jsdocs-src]: https://img.shields.io/badge/jsdocs-reference-080f12?style=flat&colorA=080f12&colorB=1fa669
+[jsdocs-href]: https://www.jsdocs.io/package/@moeru/cliff
