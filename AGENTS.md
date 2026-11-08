@@ -13,7 +13,7 @@
 - `src/invocation.ts`: `resolveInvocation` decides what one argv asks for (action context, help, version, or usage error) without running or writing anything. Test routing and validation here.
 - `src/help.ts`: help rendering. `src/cli.ts`: `createCli` and the run loop that turns an invocation into output and an exit code.
 - `src/testing.ts`: `createMemoryIo`, the public `@moeru/cliff/testing` entry.
-- `src/main.ts`: the only module bound to `process` (`runMain`).
+- `src/main.ts`: the only module bound to `process`; backs `cli.run()`. `cli.execute(argv, io)` is the process-free run.
 - `src/parser.ts`: the side-effect-free `ArgvParser` contract. `src/parsers/*`: node, cac, meow adapters, exported as subpaths.
 - Routing, help, version, defaults, and choices belong to cliff; validation and transforms belong to the flag's schema. Adapters only split argv into flags and positionals.
 

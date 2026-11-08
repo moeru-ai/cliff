@@ -2,9 +2,9 @@
  * Process-free I/O handed to every command.
  *
  * Commands write through these streams instead of `process.*` or `console.*`, so tests can
- * call `cli.run(argv, createMemoryIo())` and assert on captured text. cliff itself only
+ * call `cli.execute(argv, createMemoryIo())` and assert on captured text. cliff itself only
  * writes to `stdout` and `stderr`; `cwd`, `env`, and `stdin` are passed through for actions,
- * and `runMain` fills them from the process.
+ * and `cli.run()` fills them from the process.
  */
 export interface CliIo {
   cwd?: string
