@@ -1,6 +1,6 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec'
 
-import { DefinitionError, UsageError } from './errors'
+import { createUsageError, DefinitionError } from './errors'
 
 /**
  * One positional argument. Arguments bind to positionals in the order they are declared:
@@ -71,7 +71,7 @@ export function bindArguments(
       const rest = positionals.slice(index)
 
       if (definition.required && rest.length === 0) {
-        throw new UsageError(`missing required argument ${definition.label}`)
+        throw createUsageError({ argument: definition.label, code: 'missing-argument' })
       }
 
       values[definition.key] = rest.length > 0 ? rest : defaultValueOf(definition)
@@ -82,7 +82,7 @@ export function bindArguments(
     const value = positionals[index]
 
     if (value === undefined && definition.required) {
-      throw new UsageError(`missing required argument ${definition.label}`)
+      throw createUsageError({ argument: definition.label, code: 'missing-argument' })
     }
 
     values[definition.key] = value ?? defaultValueOf(definition)
@@ -92,7 +92,7 @@ export function bindArguments(
   const unexpected = positionals[index]
 
   if (unexpected !== undefined) {
-    throw new UsageError(`unexpected argument "${unexpected}"`)
+    throw createUsageError({ code: 'unexpected-argument', received: unexpected })
   }
 
   return values

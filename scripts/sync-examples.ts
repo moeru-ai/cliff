@@ -6,6 +6,8 @@
 //   <!-- docs:example examples/tool.ts -->   the file, as a code block
 //   <!-- docs:output tool lint --help -->    the output of running that argv, as a console block
 //
+// The first word of an output marker picks the example CLI by name: `tool` or `tool-zh`.
+//
 // each closed by `<!-- /docs:example -->` or `<!-- /docs:output -->`. Pass `--check` to fail
 // instead of writing when the README is out of date.
 
@@ -16,11 +18,13 @@ import { extname, join } from 'node:path'
 
 import { createMemoryIo } from '@moeru/cliff/testing'
 
-import { cli } from '../examples/tool.ts'
+import { cli as localized } from '../examples/localized.ts'
+import { cli as tool } from '../examples/tool.ts'
 
 const root = join(import.meta.dirname, '..')
 const readmePath = join(root, 'README.md')
 const check = process.argv.includes('--check')
+const examples = new Map([localized, tool].map(cli => [cli.name, cli]))
 
 const region = /(<!-- docs:(example|output) (.+?) -->\n)[\s\S]*?(<!-- \/docs:\2 -->)/g
 
@@ -31,12 +35,13 @@ async function renderExample(path: string): Promise<string> {
 }
 
 async function renderOutput(command: string): Promise<string> {
-  const [name, ...argv] = command.split(' ')
+  const [name = '', ...argv] = command.split(' ')
+  const cli = examples.get(name)
 
   // The marker names the CLI so the block reads like a shell session, but only the example
-  // CLI can run; a typo here would otherwise document the wrong program.
-  if (name !== cli.name) {
-    throw new Error(`docs:output "${command}" must start with "${cli.name}"`)
+  // CLIs can run; a typo here would otherwise document the wrong program.
+  if (!cli) {
+    throw new Error(`docs:output "${command}" must start with one of ${[...examples.keys()].join(', ')}`)
   }
 
   const io = createMemoryIo()

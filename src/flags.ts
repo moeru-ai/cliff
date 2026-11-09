@@ -1,6 +1,6 @@
 import type { StandardSchemaV1 } from '@standard-schema/spec'
 
-import { DefinitionError, UsageError } from './errors'
+import { createUsageError, DefinitionError } from './errors'
 
 /**
  * One flag, written the way help shows it:
@@ -111,7 +111,7 @@ export function normalizeFlagValue(flag: ResolvedFlag, raw: unknown): unknown {
     const text = String(item)
 
     if (flag.choices && !flag.choices.includes(text)) {
-      throw new UsageError(`flag --${flag.long} must be one of ${flag.choices.join(', ')}, received "${text}"`)
+      throw createUsageError({ choices: flag.choices, code: 'invalid-choice', flag: `--${flag.long}`, received: text })
     }
 
     return text

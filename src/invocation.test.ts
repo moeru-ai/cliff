@@ -20,6 +20,7 @@ describe('resolveInvocation', () => {
     const invocation = await resolveInvocation(tree, nodeParser, ['providers', 'ls', 'openrouter', '-l'])
 
     expect(invocation.kind).toBe('action')
+    expect(invocation.kind === 'action' && invocation.command).toBe('tool providers ls')
     expect(invocation.kind === 'action' && invocation.context).toEqual({
       args: { provider: 'openrouter' },
       flags: { local: true },
@@ -31,12 +32,30 @@ describe('resolveInvocation', () => {
   it('points usage errors at the deepest command it reached', async () => {
     const invocation = await resolveInvocation(tree, nodeParser, ['providers', 'ls', '--nope'])
 
-    expect(invocation).toEqual({ kind: 'usage-error', message: 'unknown flag --nope', usage: 'tool providers ls' })
+    expect(invocation).toEqual({
+      kind: 'usage-error',
+      report: { command: 'tool providers ls', issue: { code: 'unknown-flag', flag: '--nope' }, message: 'unknown flag --nope' },
+    })
   })
 
   it('lists the children when a subcommand is missing', async () => {
     const invocation = await resolveInvocation(tree, nodeParser, ['providers'])
 
-    expect(invocation).toEqual({ children: [ls], kind: 'usage-error', message: 'missing command for "tool providers"', usage: 'tool providers' })
+    expect(invocation).toEqual({
+      kind: 'usage-error',
+      report: {
+        command: 'tool providers',
+        commands: [{ aliases: [], argumentsLabel: '[provider]', default: false, description: 'List providers', hasChildren: false, name: 'ls' }],
+        issue: { code: 'missing-command', command: 'tool providers' },
+        message: 'missing command for "tool providers"',
+      },
+    })
+  })
+
+  it('returns the help model instead of text', async () => {
+    const invocation = await resolveInvocation(tree, nodeParser, ['providers', 'ls', '--help'])
+
+    expect(invocation.kind).toBe('help')
+    expect(invocation.kind === 'help' && invocation.help.command).toBe('tool providers ls')
   })
 })

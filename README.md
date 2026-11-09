@@ -25,6 +25,7 @@ cac and meow parse flags well, but nested subcommands, per-command help, exit co
 - [Flags](#flags)
 - [Arguments](#arguments)
   - [Pass arguments through](#pass-arguments-through)
+- [Custom help and usage errors](#custom-help-and-usage-errors)
 - [Concepts](#concepts)
 - [Parsers](#parsers)
 - [API at a glance](#api-at-a-glance)
@@ -210,6 +211,8 @@ Run `tool providers --help` for usage.
 ```
 <!-- /docs:output -->
 
+The wording and layout of both are the defaults. To translate them or lay them out differently, see [Custom help and usage errors](#custom-help-and-usage-errors).
+
 ### Test
 
 `cli.execute(argv, io)` touches no `process` state and resolves to the exit code. `io` only needs `stdout` and `stderr`; `createMemoryIo` from `@moeru/cliff/testing` captures both:
@@ -307,6 +310,80 @@ would run: eslint --fix src --dry
 
 `passThrough` is only allowed on a command without children, since a child name would otherwise be passed on.
 
+## Custom help and usage errors
+
+Help and usage errors are in English by default. To translate them or change their layout, pass `renderHelp` and `renderUsageError` to `createCli`. Each hook receives structured data and returns the full text to write:
+
+| Hook | Receives | Writes to |
+|---|---|---|
+| `renderHelp(help)` | `Help`: the usage lines, arguments, commands, flags, and examples of the selected command | stdout, exit code 0 |
+| `renderUsageError(report)` | `UsageErrorReport`: the `issue`, the English `message`, the `command` for the `--help` hint, and `commands` for a missing or unknown subcommand | stderr, exit code 2 |
+
+Descriptions are your own strings, so translate them where you define them. The hooks only replace what cliff words itself. The built-in `--help` and `--version` are entries of `help.flags` marked with `builtin`, so a renderer supplies their text. The default renderers are exported as `renderHelp` and `renderUsageError`, with `formatRows` for the two-column layout.
+
+Every usage error that cliff reports has an `issue`, a union keyed by `code`:
+
+| `code` | Fields |
+|---|---|
+| `missing-command` | `command` |
+| `unknown-command` | `command`, `received` |
+| `unknown-flag` | `flag` |
+| `flag-requires-value` | `flag` |
+| `invalid-choice` | `flag`, `choices`, `received` |
+| `missing-argument` | `argument` |
+| `unexpected-argument` | `received` |
+| `invalid-value` | `target`, `label`, `messages` (from the schema) |
+
+A `UsageError` thrown by an action has no issue unless it passes one: `new UsageError(message, { issue })`.
+
+<!-- docs:example examples/localized.ts -->
+```ts
+import type { UsageIssue } from '@moeru/cliff'
+
+import { createCli, defineCommand } from '@moeru/cliff'
+
+const serve = defineCommand({
+  action: ({ args, flags, io }) => {
+    io.stdout.write(`在 ${args.port} 端口启动（日志级别：${flags.log}）\n`)
+  },
+  arguments: [{ description: '监听的端口', name: 'port', required: true }],
+  description: '启动开发服务器',
+  flags: [{ default: 'info', description: '日志级别', flag: '-l, --log <debug|info|warn>' }],
+  name: 'serve',
+})
+
+// Codes left out fall back to the English `message`.
+function translate(issue: undefined | UsageIssue, message: string): string {
+  switch (issue?.code) {
+    case 'invalid-choice':
+      return `选项 ${issue.flag} 只能是 ${issue.choices.join('、')} 之一，收到了“${issue.received}”`
+    case 'missing-argument':
+      return `缺少必填参数 ${issue.argument}`
+    case 'unknown-flag':
+      return `未知的选项 ${issue.flag}`
+    default:
+      return message
+  }
+}
+
+export const cli = createCli({
+  children: [serve],
+  description: '一个中文界面的示例工具。',
+  name: 'tool-zh',
+  renderUsageError: ({ command, issue, message }) =>
+    `错误：${translate(issue, message)}\n\n运行 \`${command} --help\` 查看用法。\n`,
+})
+```
+<!-- /docs:example -->
+
+<!-- docs:output tool-zh serve --log trace 8080 -->
+```console
+$ tool-zh serve --log trace 8080
+错误：选项 --log 只能是 debug、info、warn 之一，收到了“trace”
+
+运行 `tool-zh serve --help` 查看用法。
+```
+<!-- /docs:output -->
 ## Concepts
 
 | Concept | Behavior |
@@ -333,7 +410,7 @@ An unknown flag only reaches a parser when the command sets `allowUnknownFlags`.
 
 | API | What it does | Section |
 |---|---|---|
-| `createCli(definition)` | Validates the command tree and returns a `Cli`. `parser` and `version` are set here. | [Define commands](#define-commands) |
+| `createCli(definition)` | Validates the command tree and returns a `Cli`. `parser`, `version`, `renderHelp`, and `renderUsageError` are set here. | [Define commands](#define-commands) |
 | `defineCommand(definition)` | Declares a command: `name`, `description`, `flags`, `arguments`, `action` or `children`, `alias`, `default` | [Define commands](#define-commands) |
 | `defineFlags(flags)` | Keeps a shared flag set typed so it can be spread into several commands | [Flags](#flags) |
 | `arguments` in `defineCommand` | Positional arguments: `name`, `description`, `required`, `variadic`, `default`, `schema` | [Arguments](#arguments) |
@@ -341,7 +418,10 @@ An unknown flag only reaches a parser when the command sets `allowUnknownFlags`.
 | `cli.run({ argv?, signal? })` | Runs as the process entrypoint and sets `process.exitCode` | [Run](#run) |
 | `cli.execute(argv, io, { signal? })` | Runs one invocation without `process` and resolves to the exit code | [Test](#test) |
 | `context` in `action` | `args`, `flags`, `io`, `path`, `rest`, `signal` | [Define commands](#define-commands) |
-| `UsageError` | Thrown by an action for a usage mistake the definitions cannot express; exits 2 | [Concepts](#concepts) |
+| `UsageError` | Thrown by an action for a usage mistake the definitions cannot express; exits 2. Has an optional `issue`. | [Concepts](#concepts) |
+| `renderHelp`, `renderUsageError` | The default English renderers, for hooks that reuse them | [Custom help and usage errors](#custom-help-and-usage-errors) |
+| `formatRows(rows)` | Lays out `{ label, description }` rows as the default help does | [Custom help and usage errors](#custom-help-and-usage-errors) |
+| `Help`, `UsageErrorReport`, `UsageIssue` | The data the render hooks receive | [Custom help and usage errors](#custom-help-and-usage-errors) |
 | `DefinitionError` | Thrown by `createCli` for a broken tree | [Concepts](#concepts) |
 | `createMemoryIo(overrides?)` from `@moeru/cliff/testing` | In-memory `io` whose `stdout.text()` and `stderr.text()` return what was written | [Test](#test) |
 | `nodeParser`, `cacParser`, `meowParser` from `@moeru/cliff/parsers/*` | The argv parsers | [Parsers](#parsers) |
