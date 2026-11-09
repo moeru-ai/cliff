@@ -18,6 +18,7 @@ words:
   - maxlevel
   - moeru
   - openrouter
+  - picklist
   - subpaths
   - unocss
 ignoreWords: []

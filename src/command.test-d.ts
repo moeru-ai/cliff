@@ -41,14 +41,36 @@ describe('command context types', () => {
     })
   })
 
-  it('infers arguments from the pattern', () => {
+  it('infers arguments from their fields, defaults, and schemas', () => {
     defineCommand({
       action: ({ args }) => {
-        expectTypeOf(args).toEqualTypeOf<{ files: string[], reportPath: string, target?: string }>()
+        expectTypeOf(args).toEqualTypeOf<{
+          files: string[]
+          mode: string
+          port: number
+          reportPath: string
+          target: string | undefined
+        }>()
       },
-      arguments: '<report-path> [target] [...files]',
+      arguments: [
+        { description: '', name: 'report-path', required: true },
+        { description: '', name: 'port', required: true, schema: v.pipe(v.string(), v.toNumber()) },
+        { description: '', name: 'target' },
+        { default: 'dev', description: '', name: 'mode' },
+        { description: '', name: 'files', variadic: true },
+      ],
       description: '',
       name: 'compare',
+    })
+  })
+
+  it('gives a command without arguments an empty args object', () => {
+    defineCommand({
+      action: ({ args }) => {
+        expectTypeOf(args).toEqualTypeOf<Record<never, never>>()
+      },
+      description: '',
+      name: 'noop',
     })
   })
 

@@ -154,20 +154,6 @@ export function resolveFlag(definition: FlagDefinition, owner: string): Resolved
   }
 }
 
-export async function validateFlagValue(flag: ResolvedFlag, value: unknown): Promise<unknown> {
-  if (!flag.schema) {
-    return value
-  }
-
-  const result = await flag.schema['~standard'].validate(value)
-
-  if (result.issues) {
-    throw new UsageError(`flag --${flag.long}: ${result.issues.map(issue => issue.message).join('; ')}`)
-  }
-
-  return result.value
-}
-
 function defaultValueOf(flag: ResolvedFlag): unknown {
   if (flag.default !== undefined) {
     return Array.isArray(flag.default) ? [...flag.default] : flag.default

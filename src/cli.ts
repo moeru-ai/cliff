@@ -1,3 +1,4 @@
+import type { ArgumentsDefinition } from './arguments'
 import type { CommandDefinition } from './command'
 import type { FlagsDefinition } from './flags'
 import type { Invocation } from './invocation'
@@ -27,7 +28,7 @@ export interface Cli {
 
 export interface CliDefinition<
   TFlags extends FlagsDefinition = FlagsDefinition,
-  TArguments extends string = string,
+  TArguments extends ArgumentsDefinition = ArgumentsDefinition,
 > extends Omit<CommandDefinition<TFlags, TArguments>, 'alias' | 'default'> {
   /** Defaults to the zero-dependency `node:util` `parseArgs` adapter. */
   parser?: ArgvParser
@@ -41,7 +42,7 @@ export interface ExecuteOptions {
 
 export function createCli<
   const TFlags extends FlagsDefinition = [],
-  const TArguments extends string = '',
+  const TArguments extends ArgumentsDefinition = [],
 >(definition: CliDefinition<TFlags, TArguments>): Cli {
   const { parser = nodeParser, version, ...root } = definition as CliDefinition
   const tree = buildTree(root, version)

@@ -17,7 +17,7 @@ const lint = defineCommand({
     io.stdout.write(`linting ${args.files.join(', ')} with ${flags.format}\n`)
     return 0
   },
-  arguments: '[...files]',
+  arguments: [{ description: 'Files to lint', name: 'files', variadic: true }],
   default: true, // `tool src` runs `tool lint src`
   description: 'Lint files',
   flags: [
@@ -34,7 +34,7 @@ const ls = defineCommand({
   action: ({ args, flags, io }) => {
     io.stdout.write(`${args.provider ?? 'all providers'} (${flags.local ? 'project' : 'global'})\n`)
   },
-  arguments: '[provider]',
+  arguments: [{ description: 'Provider to list', name: 'provider' }],
   description: 'List providers',
   flags: [...sharedFlags, { description: 'Use project scope', flag: '-l, --local' }],
   name: 'ls',

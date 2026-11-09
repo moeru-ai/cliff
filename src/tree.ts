@@ -1,14 +1,14 @@
-import type { ArgumentDefinition } from './arguments'
+import type { ResolvedArgument } from './arguments'
 import type { Command } from './command'
 import type { ResolvedFlag } from './flags'
 
-import { parseArgumentPattern } from './arguments'
+import { resolveArguments } from './arguments'
 import { DefinitionError } from './errors'
 import { resolveFlag } from './flags'
 
-/** A validated command tree with every flag spelling and argument pattern parsed once. */
+/** A validated command tree with every flag spelling and argument definition checked once. */
 export interface CommandTree {
-  argumentsOf: (command: Command) => readonly ArgumentDefinition[]
+  argumentsOf: (command: Command) => readonly ResolvedArgument[]
   flagsOf: (command: Command) => readonly ResolvedFlag[]
   /** Every flag in the tree, used by routing to tell value flags from booleans early. */
   index: FlagIndex
@@ -23,13 +23,13 @@ export interface FlagIndex {
 
 /** Validates `root` and everything under it, throwing `DefinitionError` before any argv is seen. */
 export function buildTree(root: Command, version: string | undefined): CommandTree {
-  const argumentPatterns = new Map<Command, ArgumentDefinition[]>()
+  const argumentsByCommand = new Map<Command, ResolvedArgument[]>()
   const flags = new Map<Command, ResolvedFlag[]>()
 
-  validateCommand(root, version !== undefined, argumentPatterns, flags)
+  validateCommand(root, version !== undefined, argumentsByCommand, flags)
 
   return {
-    argumentsOf: command => argumentPatterns.get(command) ?? [],
+    argumentsOf: command => argumentsByCommand.get(command) ?? [],
     flagsOf: command => flags.get(command) ?? [],
     index: indexFlags([...flags.values()].flat()),
     root,
@@ -56,7 +56,7 @@ export function indexFlags(flags: Iterable<ResolvedFlag>): FlagIndex {
 function validateCommand(
   command: Command,
   hasVersion: boolean,
-  argumentPatterns: Map<Command, ArgumentDefinition[]>,
+  argumentsByCommand: Map<Command, ResolvedArgument[]>,
   resolved: Map<Command, ResolvedFlag[]>,
 ): void {
   const where = `command "${command.name}"`
@@ -82,7 +82,7 @@ function validateCommand(
   }
 
   resolved.set(command, flags)
-  argumentPatterns.set(command, parseArgumentPattern(command.arguments))
+  argumentsByCommand.set(command, resolveArguments(command.arguments ?? [], where))
 
   const children = command.children ?? []
 
@@ -90,7 +90,7 @@ function validateCommand(
     throw new DefinitionError(`${where} has neither an action nor children, so running it could do nothing.`)
   }
 
-  if (children.length > 0 && command.arguments && !command.action) {
+  if (children.length > 0 && command.arguments?.length && !command.action) {
     throw new DefinitionError(`${where} declares arguments but no action, so they can never be used.`)
   }
 
@@ -116,6 +116,6 @@ function validateCommand(
       names.add(name)
     }
 
-    validateCommand(child, hasVersion, argumentPatterns, resolved)
+    validateCommand(child, hasVersion, argumentsByCommand, resolved)
   }
 }

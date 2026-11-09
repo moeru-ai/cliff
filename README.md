@@ -23,6 +23,7 @@ cac and meow parse flags well, but nested subcommands, per-command help, exit co
   - [Cancel](#cancel)
   - [Use another parser](#use-another-parser)
 - [Flags](#flags)
+- [Arguments](#arguments)
 - [Concepts](#concepts)
 - [Parsers](#parsers)
 - [API at a glance](#api-at-a-glance)
@@ -48,7 +49,7 @@ cliff needs Node.js 22.4 or later. cac and meow are optional peer dependencies: 
 
 ### Define commands
 
-A command is a name, a description, its flags and arguments, and either an `action` or `children`. The types of `args` and `flags` come from the spellings:
+A command is a name, a description, its flags and arguments, and either an `action` or `children`. The types of `flags` come from their spellings, and the types of `args` from their fields:
 
 <!-- docs:example examples/tool.ts -->
 ```ts
@@ -71,7 +72,7 @@ const lint = defineCommand({
     io.stdout.write(`linting ${args.files.join(', ')} with ${flags.format}\n`)
     return 0
   },
-  arguments: '[...files]',
+  arguments: [{ description: 'Files to lint', name: 'files', variadic: true }],
   default: true, // `tool src` runs `tool lint src`
   description: 'Lint files',
   flags: [
@@ -88,7 +89,7 @@ const ls = defineCommand({
   action: ({ args, flags, io }) => {
     io.stdout.write(`${args.provider ?? 'all providers'} (${flags.local ? 'project' : 'global'})\n`)
   },
-  arguments: '[provider]',
+  arguments: [{ description: 'Provider to list', name: 'provider' }],
   description: 'List providers',
   flags: [...sharedFlags, { description: 'Use project scope', flag: '-l, --local' }],
   name: 'ls',
@@ -147,6 +148,9 @@ Lint files
 
 Usage
   $ tool lint [...files] [flags]
+
+Arguments
+  [...files]  Files to lint
 
 Flags
   -c, --config <path>          Config file
@@ -250,16 +254,39 @@ Keys are the camelCase long name: `--timeout-ms` becomes `timeoutMs`. `default` 
 
 Flags are not inherited. Each command accepts exactly the flags it declares, so shared flags are spread in with `defineFlags`. A shared flag may still be typed before the command name (`tool -c x providers ls`).
 
+## Arguments
+
+Positional arguments are declared in order, with explicit fields:
+
+```ts
+arguments: [
+  { description: 'Port to listen on', name: 'port', required: true, schema: v.pipe(v.string(), v.toNumber(), v.integer()) },
+  { default: 'dev', description: 'Run mode', name: 'mode', schema: v.picklist(['dev', 'prod']) },
+  { description: 'Files to serve', name: 'files', variadic: true },
+]
+// args: { port: number, mode: 'dev' | 'prod', files: string[] }
+```
+
+| Fields | Absent | Value type without `schema` | Help |
+|---|---|---|---|
+| `required: true` | usage error | `string` | `<name>` |
+| (none) | `undefined` | `string \| undefined` | `[name]` |
+| `variadic: true` | `[]` | `string[]`, every remaining positional | `[...name]` |
+| `required: true, variadic: true` | usage error | `string[]`, at least one | `<...name>` |
+
+Keys are the camelCase name: `report-path` becomes `reportPath`. `default` replaces the absent value and removes `undefined` from the type. `schema` works as it does for flags: it receives the bound value or the default, its output is what the action sees, and a failure is a usage error such as `error: argument <port>: Invalid type`.
+
+Arguments bind left to right, so only the last argument may be variadic, and a required argument cannot follow an optional one. Extra positionals are a usage error. Help lists each argument with its description and default.
+
 ## Concepts
 
 | Concept | Behavior |
 |---|---|
-| Arguments | `<a>` is required, `[a]` optional, `<...a>` one or more, `[...a]` zero or more. Extra positionals are a usage error. |
 | Routing | The first positional that names a child selects it. Otherwise, a `default: true` child receives it. |
 | Built-ins | `-h`/`--help` prints help for the selected command. `-v`/`--version` is enabled by `version`. Both are reserved. |
 | Exit codes | The value returned by `action` (nothing means 0). Help and version exit 0. Usage errors, including a `UsageError` thrown by an action, exit 2. Other errors are rethrown. |
 | `--` | Later tokens are not parsed. They are bound to positionals and also exposed as `context.rest`. |
-| Definition errors | Malformed spellings, duplicate keys or short flags, reserved names, and ambiguous trees throw `DefinitionError` from `createCli`. |
+| Definition errors | Malformed spellings or argument names, duplicate keys or short flags, arguments in an impossible order, reserved names, and ambiguous trees throw `DefinitionError` from `createCli`. |
 
 ## Parsers
 
@@ -280,6 +307,7 @@ An unknown flag only reaches a parser when the command sets `allowUnknownFlags`.
 | `createCli(definition)` | Validates the command tree and returns a `Cli`. `parser` and `version` are set here. | [Define commands](#define-commands) |
 | `defineCommand(definition)` | Declares a command: `name`, `description`, `flags`, `arguments`, `action` or `children`, `alias`, `default` | [Define commands](#define-commands) |
 | `defineFlags(flags)` | Keeps a shared flag set typed so it can be spread into several commands | [Flags](#flags) |
+| `arguments` in `defineCommand` | Positional arguments: `name`, `description`, `required`, `variadic`, `default`, `schema` | [Arguments](#arguments) |
 | `cli.run({ argv?, signal? })` | Runs as the process entrypoint and sets `process.exitCode` | [Run](#run) |
 | `cli.execute(argv, io, { signal? })` | Runs one invocation without `process` and resolves to the exit code | [Test](#test) |
 | `context` in `action` | `args`, `flags`, `io`, `path`, `rest`, `signal` | [Define commands](#define-commands) |

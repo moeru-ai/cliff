@@ -1,5 +1,8 @@
+import type { ArgumentDefinition } from './arguments'
 import type { Command } from './command'
 import type { ResolvedFlag } from './flags'
+
+import { formatArgument } from './arguments'
 
 interface HelpSection {
   body: string
@@ -16,7 +19,7 @@ export function formatCommands(commands: readonly Command[]): string {
     description: command.default ? `${command.description} (default)` : command.description,
     label: [
       [command.name, ...(command.alias ?? [])].join(', '),
-      command.children ? '<command>' : command.arguments,
+      command.children ? '<command>' : formatArguments(command),
     ].filter(Boolean).join(' '),
   })))
 }
@@ -32,6 +35,16 @@ export function renderHelp(
     { body: command.help ?? command.description },
     { body: formatUsage(nodes).map(line => `  $ ${line}`).join('\n'), title: 'Usage' },
   ]
+
+  if (command.arguments?.length) {
+    sections.push({
+      body: formatRows(command.arguments.map(argument => ({
+        description: formatArgumentDescription(argument),
+        label: formatArgument(argument),
+      }))),
+      title: 'Arguments',
+    })
+  }
 
   if (command.children?.length) {
     sections.push({ body: formatCommands(command.children), title: 'Commands' })
@@ -59,6 +72,20 @@ export function renderHelp(
     .filter(section => section.body)
     .map(section => section.title ? `${section.title}\n${section.body}` : section.body)
     .join('\n\n')}\n`
+}
+
+function formatArgumentDescription(argument: ArgumentDefinition): string {
+  const empty = Array.isArray(argument.default) && argument.default.length === 0
+
+  if (argument.default === undefined || empty) {
+    return argument.description
+  }
+
+  return `${argument.description} (default: ${Array.isArray(argument.default) ? argument.default.join(', ') : String(argument.default)})`
+}
+
+function formatArguments(command: Command): string {
+  return (command.arguments ?? []).map(formatArgument).join(' ')
 }
 
 function formatFlagDescription(flag: ResolvedFlag): string {
@@ -99,7 +126,7 @@ function formatUsage(nodes: readonly Command[]): string[] {
   }
 
   if (command.action || !command.children?.length) {
-    lines.push([path, command.arguments, '[flags]'].filter(Boolean).join(' '))
+    lines.push([path, formatArguments(command), '[flags]'].filter(Boolean).join(' '))
   }
 
   return lines

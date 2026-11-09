@@ -1,4 +1,4 @@
-import type { InferArguments } from './arguments'
+import type { ArgumentsDefinition, InferArguments } from './arguments'
 import type { FlagsDefinition, InferFlags } from './flags'
 import type { CliIo } from './io'
 
@@ -13,7 +13,7 @@ export interface Command extends Omit<CommandDefinition, 'action'> {
 
 export interface CommandContext<
   TFlags extends FlagsDefinition = FlagsDefinition,
-  TArguments extends string = string,
+  TArguments extends ArgumentsDefinition = ArgumentsDefinition,
 > {
   args: InferArguments<TArguments>
   flags: InferFlags<TFlags>
@@ -28,13 +28,13 @@ export interface CommandContext<
 
 export interface CommandDefinition<
   TFlags extends FlagsDefinition = FlagsDefinition,
-  TArguments extends string = string,
+  TArguments extends ArgumentsDefinition = ArgumentsDefinition,
 > {
   action?: (context: CommandContext<TFlags, TArguments>) => CommandResult | Promise<CommandResult>
   alias?: readonly string[]
   /** Accept flags this command does not declare, instead of failing with a usage error. */
   allowUnknownFlags?: boolean
-  /** Positional argument pattern, such as `<source> [...rest]`. */
+  /** Positional arguments, bound in this order. See `ArgumentDefinition`. */
   arguments?: TArguments
   children?: readonly Command[]
   /**
@@ -60,7 +60,7 @@ export type CommandResult = number | void
 
 export function defineCommand<
   const TFlags extends FlagsDefinition = [],
-  const TArguments extends string = '',
+  const TArguments extends ArgumentsDefinition = [],
 >(command: CommandDefinition<TFlags, TArguments>): Command {
   return command
 }
