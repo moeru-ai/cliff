@@ -7,7 +7,7 @@ import { buildTree } from './tree'
 
 const ls = defineCommand({
   action: () => 0,
-  arguments: '[provider]',
+  arguments: [{ description: 'Provider name', name: 'provider' }],
   description: 'List providers',
   flags: [{ description: 'Use project scope', flag: '-l, --local' }],
   name: 'ls',

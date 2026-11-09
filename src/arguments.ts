@@ -1,43 +1,69 @@
+import type { StandardSchemaV1 } from '@standard-schema/spec'
+
 import { DefinitionError, UsageError } from './errors'
 
-export interface ArgumentDefinition {
+/**
+ * One positional argument. Arguments bind to positionals in the order they are declared:
+ *
+ * - `required: true` must be given; otherwise the argument is optional
+ * - `variadic: true` collects every remaining positional into `string[]`; only the last
+ *   argument may be variadic
+ *
+ * The camelCase key comes from the name: `report-path` becomes `reportPath`.
+ */
+export interface ArgumentDefinition<TName extends string = string> {
+  /** Used when the argument is absent. Passed through `schema` like a given value. */
+  default?: unknown
+  description: string
+  name: TName
+  required?: boolean
+  /**
+   * Any Standard Schema (Valibot, Zod, ArkType, ...). It receives the bound value (or the
+   * default) and its output is what the action sees, e.g. `v.pipe(v.string(), v.toNumber())`.
+   */
+  schema?: StandardSchemaV1
+  variadic?: boolean
+}
+
+export type ArgumentsDefinition = readonly ArgumentDefinition[]
+
+// Mirrors `InferFlags`: `{}` for no arguments, and an open record when the definitions were
+// widened (an erased `Command`), since nothing is known about their keys then.
+export type InferArguments<T extends ArgumentsDefinition> = [T[number]] extends [never]
+  ? Record<never, never>
+  : string extends T[number]['name']
+    ? Record<string, unknown>
+    : { -readonly [TDefinition in T[number] as CamelCase<TDefinition['name']>]: ArgumentValue<TDefinition> }
+
+/** One argument after its definition is checked. */
+export interface ResolvedArgument {
+  default?: unknown
+  description: string
   key: string
+  /** How help shows it: `<name>`, `[name]`, `<...name>`, or `[...name]`. */
+  label: string
   name: string
   required: boolean
+  schema?: StandardSchemaV1
   variadic: boolean
 }
 
-/**
- * Positional arguments are declared as a pattern string such as `<source> [target] [...rest]`:
- *
- * - `<name>` required, `[name]` optional
- * - `<...name>` one or more, `[...name]` zero or more; only the last argument may be variadic
- * - kebab-case names become camelCase keys (`<report-path>` -> `reportPath`)
- */
-export type InferArguments<TPattern extends string> = Prettify<ParsePattern<TPattern>>
+type ArgumentValue<TDefinition extends ArgumentDefinition>
+  = TDefinition extends { schema: infer TSchema extends StandardSchemaV1 } ? StandardSchemaV1.InferOutput<TSchema>
+    : TDefinition extends { variadic: true } ? string[]
+      : TDefinition extends { required: true } ? string
+        : TDefinition extends { default: unknown } ? string
+          : string | undefined
 
 type CamelCase<T extends string> = T extends `${infer Head}-${infer Tail}`
   ? `${Head}${Capitalize<CamelCase<Tail>>}`
   : T
 
-type ParseArgument<T extends string>
-  = T extends `<...${infer Name}>` ? { [K in CamelCase<Name>]: string[] }
-    : T extends `[...${infer Name}]` ? { [K in CamelCase<Name>]: string[] }
-      : T extends `<${infer Name}>` ? { [K in CamelCase<Name>]: string }
-        : T extends `[${infer Name}]` ? { [K in CamelCase<Name>]?: string }
-          : Record<never, never>
-
-type ParsePattern<T extends string> = T extends `${infer Head} ${infer Tail}`
-  ? ParseArgument<Head> & ParsePattern<Tail>
-  : ParseArgument<T>
-
-type Prettify<T> = { [K in keyof T]: T[K] } & {}
-
 export function bindArguments(
-  definitions: readonly ArgumentDefinition[],
+  definitions: readonly ResolvedArgument[],
   positionals: readonly string[],
-): Record<string, string | string[] | undefined> {
-  const values: Record<string, string | string[] | undefined> = {}
+): Record<string, unknown> {
+  const values: Record<string, unknown> = {}
   let index = 0
 
   for (const definition of definitions) {
@@ -45,10 +71,10 @@ export function bindArguments(
       const rest = positionals.slice(index)
 
       if (definition.required && rest.length === 0) {
-        throw new UsageError(`missing required argument <...${definition.name}>`)
+        throw new UsageError(`missing required argument ${definition.label}`)
       }
 
-      values[definition.key] = rest
+      values[definition.key] = rest.length > 0 ? rest : defaultValueOf(definition)
       index = positionals.length
       continue
     }
@@ -56,10 +82,10 @@ export function bindArguments(
     const value = positionals[index]
 
     if (value === undefined && definition.required) {
-      throw new UsageError(`missing required argument <${definition.name}>`)
+      throw new UsageError(`missing required argument ${definition.label}`)
     }
 
-    values[definition.key] = value
+    values[definition.key] = value ?? defaultValueOf(definition)
     index += 1
   }
 
@@ -72,36 +98,64 @@ export function bindArguments(
   return values
 }
 
-export function parseArgumentPattern(pattern: string | undefined): ArgumentDefinition[] {
-  const parts = (pattern ?? '').split(/\s+/u).filter(Boolean)
-  const definitions = parts.map((part) => {
-    const match = /^(?:<(\.\.\.)?([\w-]+)>|\[(\.\.\.)?([\w-]+)\])$/u.exec(part)
+/** How usage lines and help show an argument: `<name>`, `[name]`, `<...name>`, or `[...name]`. */
+export function formatArgument(definition: ArgumentDefinition): string {
+  const name = definition.variadic ? `...${definition.name}` : definition.name
 
-    if (!match) {
-      throw new DefinitionError(`Invalid argument "${part}" in pattern "${pattern}". Use <name>, [name], <...name>, or [...name].`)
+  return definition.required ? `<${name}>` : `[${name}]`
+}
+
+/** Checks the order and names of one command's arguments, throwing `DefinitionError`. */
+export function resolveArguments(definitions: ArgumentsDefinition, owner: string): ResolvedArgument[] {
+  const resolved = definitions.map((definition) => {
+    if (!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/iu.test(definition.name)) {
+      throw new DefinitionError(`argument "${definition.name}" of ${owner} is not a valid name. Use letters, digits, and single dashes, such as "report-path".`)
     }
 
-    const name = match[2] ?? match[4] ?? ''
-
     return {
-      key: name.replace(/-(\w)/gu, (_, character: string) => character.toUpperCase()),
-      name,
-      required: match[2] !== undefined,
-      variadic: (match[1] ?? match[3]) !== undefined,
+      default: definition.default,
+      description: definition.description,
+      key: definition.name.replace(/-(\w)/gu, (_, character: string) => character.toUpperCase()),
+      label: formatArgument(definition),
+      name: definition.name,
+      required: definition.required === true,
+      schema: definition.schema,
+      variadic: definition.variadic === true,
     }
   })
 
-  for (const [index, definition] of definitions.entries()) {
-    if (definition.variadic && index !== definitions.length - 1) {
-      throw new DefinitionError(`Variadic argument "${definition.name}" must be last in pattern "${pattern}".`)
+  for (const [index, argument] of resolved.entries()) {
+    const label = `argument ${argument.label} of ${owner}`
+    const previous = resolved.slice(0, index)
+
+    if (argument.variadic && index !== resolved.length - 1) {
+      throw new DefinitionError(`${label} is variadic, so it must be last.`)
     }
 
     // Binding is positional and greedy, so an optional argument before a required one could
-    // never be left empty; reject the pattern instead of guessing which one the user skipped.
-    if (definition.required && definitions.slice(0, index).some(previous => !previous.required)) {
-      throw new DefinitionError(`Required argument "${definition.name}" cannot follow an optional argument in pattern "${pattern}".`)
+    // never be left empty; reject the order instead of guessing which one the user skipped.
+    if (argument.required && previous.some(other => !other.required)) {
+      throw new DefinitionError(`${label} is required, so it cannot follow an optional argument.`)
+    }
+
+    if (argument.required && argument.default !== undefined) {
+      throw new DefinitionError(`${label} is required, so its default could never be used.`)
+    }
+
+    const clash = previous.find(other => other.key === argument.key)
+
+    if (clash) {
+      throw new DefinitionError(`${label} clashes with argument ${clash.label}.`)
     }
   }
 
-  return definitions
+  return resolved
+}
+
+function defaultValueOf(argument: ResolvedArgument): unknown {
+  if (argument.default !== undefined) {
+    return Array.isArray(argument.default) ? [...argument.default] : argument.default
+  }
+
+  return argument.variadic ? [] : undefined
 }

@@ -1,4 +1,4 @@
-export type { ArgumentDefinition, InferArguments } from './arguments'
+export type { ArgumentDefinition, ArgumentsDefinition, InferArguments } from './arguments'
 export type { Cli, CliDefinition, ExecuteOptions } from './cli'
 export { createCli } from './cli'
 export type { Command, CommandContext, CommandDefinition, CommandResult } from './command'

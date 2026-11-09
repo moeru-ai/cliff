@@ -4,9 +4,10 @@ import type { CommandTree } from './tree'
 
 import { bindArguments } from './arguments'
 import { UsageError } from './errors'
-import { normalizeFlagValue, validateFlagValue } from './flags'
+import { normalizeFlagValue } from './flags'
 import { renderHelp } from './help'
 import { resolveRoute } from './route'
+import { validateValue } from './schema'
 
 /**
  * What one argv asks for, decided without running anything or writing output.
@@ -69,7 +70,7 @@ export async function resolveInvocation(
     const values: Record<string, unknown> = {}
 
     for (const flag of flags) {
-      values[flag.key] = await validateFlagValue(flag, normalizeFlagValue(flag, parsed.flags[flag.key]))
+      values[flag.key] = await validateValue(flag.schema, normalizeFlagValue(flag, parsed.flags[flag.key]), `flag --${flag.long}`)
 
       // NOTICE: Standard Schema's `validate(value)` takes no signal, so an async schema that is
       // already running cannot be cancelled. Checking between flags is the earliest point an
@@ -77,10 +78,21 @@ export async function resolveInvocation(
       signal?.throwIfAborted()
     }
 
+    const definitions = tree.argumentsOf(command)
+    const bound = bindArguments(definitions, [...parsed.positionals, ...route.rest])
+    const args: Record<string, unknown> = {}
+
+    for (const argument of definitions) {
+      args[argument.key] = await validateValue(argument.schema, bound[argument.key], `argument ${argument.label}`)
+
+      // Same limit as for flags above: a running async schema cannot be cancelled.
+      signal?.throwIfAborted()
+    }
+
     return {
       action: command.action,
       context: {
-        args: bindArguments(tree.argumentsOf(command), [...parsed.positionals, ...route.rest]),
+        args,
         flags: values,
         path: route.nodes.slice(1).map(node => node.name),
         rest: route.rest,

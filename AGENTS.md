@@ -7,7 +7,7 @@
 
 - `src/command.ts`: public command DSL (`defineCommand`) and context types.
 - `src/flags.ts`: `defineFlags`, flag-spelling parsing and its type inference (`-c, --config <path>`), and optional Standard Schema validation with `~standard.validate`. Flags are never inherited; shared sets are spread in.
-- `src/arguments.ts`: positional-argument patterns and their type inference.
+- `src/arguments.ts`: declarative positional arguments (`name`, `required`, `variadic`, `default`, `schema`), their checks, binding, and type inference. `src/schema.ts`: the Standard Schema call shared by flags and arguments.
 - `src/tree.ts`: `buildTree` validates the command tree once (`DefinitionError`) and indexes every flag.
 - `src/route.ts`: one left-to-right argv pass that selects the command and prepares parser input.
 - `src/invocation.ts`: `resolveInvocation` decides what one argv asks for (action context, help, version, or usage error) without running or writing anything. Test routing and validation here.

@@ -6,7 +6,7 @@ import { UsageError } from './errors'
 import { indexFlags } from './tree'
 
 export interface Route {
-  /** argv for the parser: command-name tokens removed, nothing from the first bare `--`. */
+  /** argv for the parser: command-name tokens removed, nothing from the first bare `--` or passed-through token. */
   argv: string[]
   help: boolean
   /** Commands from the CLI root (inclusive) to the selected command. */
@@ -53,7 +53,7 @@ export function resolveRoute(tree: CommandTree, argv: readonly string[]): Route 
 
   const separator = argv.indexOf('--')
   const tokens = separator === -1 ? argv : argv.slice(0, separator)
-  const rest = separator === -1 ? [] : argv.slice(separator + 1)
+  let rest = separator === -1 ? [] : argv.slice(separator + 1)
 
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index]!
@@ -151,11 +151,22 @@ export function resolveRoute(tree: CommandTree, argv: readonly string[]): Route 
         }
       }
 
-      const target = nodes.at(-1)!
+      const reached = nodes.at(-1)!
 
-      if (target.children && !target.action) {
+      if (reached.children && !reached.action) {
         unmatched ??= token
       }
+    }
+
+    const target = nodes.at(-1)!
+
+    // `buildTree` only allows `passThrough` on a leaf, so routing is over once its first
+    // positional appears. That token and everything after it, a later `--` included, is the
+    // passed-through command line, so it is taken from `argv`, not from `tokens`.
+    if (target.passThrough) {
+      positionalSeen = true
+      rest = argv.slice(index)
+      break
     }
 
     positionalSeen = true

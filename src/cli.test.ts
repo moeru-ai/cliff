@@ -24,7 +24,7 @@ const sharedFlags = defineFlags([
 function createSampleCli(parser: ArgvParser, run: Run) {
   const lint = defineCommand({
     action: context => run(context),
-    arguments: '[...files]',
+    arguments: [{ description: 'Files to lint', name: 'files', variadic: true }],
     default: true,
     description: 'Lint files',
     flags: [
@@ -41,7 +41,7 @@ function createSampleCli(parser: ArgvParser, run: Run) {
   const ls = defineCommand({
     action: context => run(context),
     alias: ['list'],
-    arguments: '[provider]',
+    arguments: [{ description: 'Provider name', name: 'provider' }],
     description: 'List providers',
     flags: [
       ...sharedFlags,
@@ -124,6 +124,52 @@ describe.each([nodeParser, cacParser, meowParser])('parser contract: $name', (pa
 
     expect(context?.path).toEqual(['lint'])
     expect(context?.flags.dirty).toBe(true)
+  })
+
+  it('transforms and validates arguments through their schema', async () => {
+    const run = vi.fn<Run>()
+    const io = createMemoryIo()
+    const cli = createCli({
+      action: run,
+      arguments: [
+        { description: 'Port', name: 'port', required: true, schema: v.pipe(v.string(), v.toNumber(), v.integer()) },
+        { default: 'dev', description: 'Mode', name: 'mode', schema: v.picklist(['dev', 'prod']) },
+      ],
+      description: '',
+      name: 'serve',
+      parser,
+    })
+
+    expect(await cli.execute(['8080'], createMemoryIo())).toBe(0)
+    expect(run.mock.calls[0]?.[0].args).toEqual({ mode: 'dev', port: 8080 })
+
+    expect(await cli.execute(['8080', 'staging'], io)).toBe(2)
+    expect(io.stderr.text().split('\n')[0]).toBe('error: argument [mode]: Invalid type: Expected ("dev" | "prod") but received "staging"')
+  })
+
+  it('passes everything from the first positional of a passThrough command through', async () => {
+    const run = vi.fn<Run>()
+    const cli = createCli({
+      children: [defineCommand({
+        action: run,
+        arguments: [{ description: 'Command to run', name: 'command', required: true, variadic: true }],
+        description: 'Run a command',
+        flags: [{ description: 'Dry run', flag: '--dry' }],
+        name: 'exec',
+        passThrough: true,
+      })],
+      description: '',
+      name: 'tool',
+      parser,
+    })
+
+    expect(await cli.execute(['exec', '--dry', 'eslint', '--fix', '-c', 'x', 'src', '--dry', '--help', '--', 'y'], createMemoryIo())).toBe(0)
+
+    const passed = ['eslint', '--fix', '-c', 'x', 'src', '--dry', '--help', '--', 'y']
+
+    expect(run.mock.calls[0]?.[0].flags).toEqual({ dry: true })
+    expect(run.mock.calls[0]?.[0].args).toEqual({ command: passed })
+    expect(run.mock.calls[0]?.[0].rest).toEqual(passed)
   })
 
   it('binds tokens after -- as positionals without parsing them', async () => {
@@ -223,6 +269,9 @@ describe('createCli', () => {
       Usage
         $ alint config providers ls [provider] [flags]
 
+      Arguments
+        [provider]  Provider name
+
       Flags
         -c, --config <path>  Config file
             --no-cache       Disable the cache
@@ -231,6 +280,53 @@ describe('createCli', () => {
         -v, --version        Show version
       "
     `)
+  })
+
+  it('lists arguments with their defaults in help', async () => {
+    const io = createMemoryIo()
+    const cli = createCli({
+      action: () => 0,
+      arguments: [
+        { description: 'Port to listen on', name: 'port', required: true },
+        { default: 'dev', description: 'Run mode', name: 'mode' },
+        { description: 'Files to serve', name: 'files', variadic: true },
+      ],
+      description: 'Serve files',
+      name: 'serve',
+    })
+
+    await cli.execute(['--help'], io)
+
+    expect(io.stdout.text()).toMatchInlineSnapshot(`
+      "Serve files
+
+      Usage
+        $ serve <port> [mode] [...files] [flags]
+
+      Arguments
+        <port>      Port to listen on
+        [mode]      Run mode (default: dev)
+        [...files]  Files to serve
+
+      Flags
+        -h, --help  Show help
+      "
+    `)
+  })
+
+  it('puts flags before the arguments in the usage of a passThrough command', async () => {
+    const io = createMemoryIo()
+    const cli = createCli({
+      action: () => 0,
+      arguments: [{ description: 'Command to run', name: 'command', required: true, variadic: true }],
+      description: 'Run a command',
+      name: 'exec',
+      passThrough: true,
+    })
+
+    await cli.execute(['-h'], io)
+
+    expect(io.stdout.text()).toContain('Usage\n  $ exec [flags] <...command>\n')
   })
 
   it('notes defaults and repeatable flags in help', async () => {
@@ -271,7 +367,7 @@ describe('createCli', () => {
     const cli = createCli({
       action: run,
       allowUnknownFlags: true,
-      arguments: '[...files]',
+      arguments: [{ description: '', name: 'files', variadic: true }],
       description: 'Single command CLI',
       name: 'tool',
     })
@@ -292,7 +388,10 @@ describe('createCli definition checks', () => {
     ['both --cache and --no-cache', [leaf('a', { flags: [{ description: '', flag: '--cache' }, { description: '', flag: '--no-cache' }] })], 'clashes with flag "--cache"'],
     ['a malformed spelling', [leaf('a', { flags: [{ description: '', flag: '--config=<path>' }] })], 'is not a valid spelling'],
     ['a negated flag with a value', [leaf('a', { flags: [{ description: '', flag: '--no-cache <dir>' }] })], 'is negated, so it cannot take a value'],
-    ['a bad argument pattern', [leaf('a', { arguments: '<a> files' })], 'Invalid argument "files"'],
+    ['a bad argument', [leaf('a', { arguments: [{ description: '', name: 'files', variadic: true }, { description: '', name: 'out' }] })], 'must be last'],
+    ['passThrough with children', [defineCommand({ action: () => 0, arguments: [{ description: '', name: 'x', variadic: true }], children: [leaf('b')], description: '', name: 'a', passThrough: true })], 'command "a" passes arguments through, so it cannot have subcommands'],
+    ['passThrough without a variadic argument', [leaf('a', { arguments: [{ description: '', name: 'x' }], passThrough: true })], 'command "a" passes arguments through, so its last argument must be variadic'],
+    ['arguments on a command without an action', [defineCommand({ arguments: [{ description: '', name: 'x' }], children: [leaf('b')], description: '', name: 'a' })], 'declares arguments but no action'],
     ['a leaf without an action', [defineCommand({ description: '', name: 'a' })], 'command "a" has neither an action nor children'],
   ])('rejects %s', (_, children, message) => {
     expect(() => createCli({ children, description: '', name: 'tool', version: '1.0.0' })).toThrow(DefinitionError)
@@ -350,6 +449,29 @@ describe('abort signal', () => {
     })
 
     await expect(cli.execute([], createMemoryIo(), { signal: controller.signal })).rejects.toBe(reason)
+    expect(run).not.toHaveBeenCalled()
+  })
+
+  it('does not run the command when aborted during argument validation', async () => {
+    const run = vi.fn<Run>()
+    const controller = new AbortController()
+    const reason = new Error('cancelled')
+    const cli = createCli({
+      action: run,
+      arguments: [{
+        description: 'Name',
+        name: 'name',
+        required: true,
+        schema: v.pipeAsync(v.string(), v.checkAsync(async () => {
+          controller.abort(reason)
+          return true
+        })),
+      }],
+      description: '',
+      name: 'tool',
+    })
+
+    await expect(cli.execute(['a'], createMemoryIo(), { signal: controller.signal })).rejects.toBe(reason)
     expect(run).not.toHaveBeenCalled()
   })
 })
