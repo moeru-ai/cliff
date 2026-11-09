@@ -1,7 +1,7 @@
 {
   "name": "@moeru/cliff",
   "type": "module",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "packageManager": "pnpm@11.18.0",
   "description": "Command tree orchestration for Node.js CLIs, with pluggable cac, meow, and node:util argv parsers",
   "license": "MIT",
