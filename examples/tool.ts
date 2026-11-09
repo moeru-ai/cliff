@@ -41,8 +41,20 @@ const ls = defineCommand({
 })
 const providers = defineCommand({ children: [ls], description: 'Manage providers', name: 'providers' })
 
+// `tool exec --dry eslint --fix src` hands `eslint --fix src` over untouched, as `pnpm exec` does.
+const exec = defineCommand({
+  action: ({ args, flags, io }) => {
+    io.stdout.write(`${flags.dry ? 'would run' : 'running'}: ${args.command.join(' ')}\n`)
+  },
+  arguments: [{ description: 'Command and its arguments', name: 'command', required: true, variadic: true }],
+  description: 'Run a command',
+  flags: [{ description: 'Print the command instead of running it', flag: '--dry' }],
+  name: 'exec',
+  passThrough: true,
+})
+
 export const cli = createCli({
-  children: [providers, lint],
+  children: [providers, exec, lint],
   description: 'An example tool.',
   name: 'tool',
   version: '1.0.0',

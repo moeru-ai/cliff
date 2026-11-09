@@ -126,7 +126,12 @@ function formatUsage(nodes: readonly Command[]): string[] {
   }
 
   if (command.action || !command.children?.length) {
-    lines.push([path, formatArguments(command), '[flags]'].filter(Boolean).join(' '))
+    // Flags after the first argument of a passThrough command belong to what it runs.
+    const parts = command.passThrough
+      ? [path, '[flags]', formatArguments(command)]
+      : [path, formatArguments(command), '[flags]']
+
+    lines.push(parts.filter(Boolean).join(' '))
   }
 
   return lines

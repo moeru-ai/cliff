@@ -90,6 +90,14 @@ function validateCommand(
     throw new DefinitionError(`${where} has neither an action nor children, so running it could do nothing.`)
   }
 
+  if (command.passThrough && children.length > 0) {
+    throw new DefinitionError(`${where} passes arguments through, so it cannot have subcommands.`)
+  }
+
+  if (command.passThrough && !command.arguments?.at(-1)?.variadic) {
+    throw new DefinitionError(`${where} passes arguments through, so its last argument must be variadic.`)
+  }
+
   if (children.length > 0 && command.arguments?.length && !command.action) {
     throw new DefinitionError(`${where} declares arguments but no action, so they can never be used.`)
   }

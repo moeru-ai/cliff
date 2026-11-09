@@ -20,7 +20,10 @@ export interface CommandContext<
   io: CliIo
   /** Names from the root to this command, excluding the CLI name: `['config', 'providers', 'ls']`. */
   path: readonly string[]
-  /** Tokens after a bare `--`. They are also bound to positional arguments. */
+  /**
+   * Tokens after a bare `--`, or from the first positional on for a `passThrough` command.
+   * They are also bound to positional arguments.
+   */
   rest: readonly string[]
   /** Aborted when the caller cancels: `execute`'s `signal`, or SIGINT/SIGTERM under `run`. Never aborts otherwise. */
   signal: AbortSignal
@@ -53,6 +56,14 @@ export interface CommandDefinition<
   /** Longer help paragraph. Falls back to `description`. */
   help?: string
   name: string
+  /**
+   * Pass every token from the first positional on to the action untouched, flags and `--`
+   * included, as `pnpm exec eslint --fix` does. Flags of this command must come before it.
+   *
+   * The tokens land in `rest` and in the last argument, which must be variadic. Only a command
+   * without children can pass through, since a child name would otherwise be passed on.
+   */
+  passThrough?: boolean
 }
 
 /** An action returns its exit code; returning nothing means success. */

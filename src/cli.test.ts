@@ -147,6 +147,31 @@ describe.each([nodeParser, cacParser, meowParser])('parser contract: $name', (pa
     expect(io.stderr.text().split('\n')[0]).toBe('error: argument [mode]: Invalid type: Expected ("dev" | "prod") but received "staging"')
   })
 
+  it('passes everything from the first positional of a passThrough command through', async () => {
+    const run = vi.fn<Run>()
+    const cli = createCli({
+      children: [defineCommand({
+        action: run,
+        arguments: [{ description: 'Command to run', name: 'command', required: true, variadic: true }],
+        description: 'Run a command',
+        flags: [{ description: 'Dry run', flag: '--dry' }],
+        name: 'exec',
+        passThrough: true,
+      })],
+      description: '',
+      name: 'tool',
+      parser,
+    })
+
+    expect(await cli.execute(['exec', '--dry', 'eslint', '--fix', '-c', 'x', 'src', '--dry', '--help', '--', 'y'], createMemoryIo())).toBe(0)
+
+    const passed = ['eslint', '--fix', '-c', 'x', 'src', '--dry', '--help', '--', 'y']
+
+    expect(run.mock.calls[0]?.[0].flags).toEqual({ dry: true })
+    expect(run.mock.calls[0]?.[0].args).toEqual({ command: passed })
+    expect(run.mock.calls[0]?.[0].rest).toEqual(passed)
+  })
+
   it('binds tokens after -- as positionals without parsing them', async () => {
     const { context } = await invoke(['--', '--weird', 'config'])
 
@@ -289,6 +314,21 @@ describe('createCli', () => {
     `)
   })
 
+  it('puts flags before the arguments in the usage of a passThrough command', async () => {
+    const io = createMemoryIo()
+    const cli = createCli({
+      action: () => 0,
+      arguments: [{ description: 'Command to run', name: 'command', required: true, variadic: true }],
+      description: 'Run a command',
+      name: 'exec',
+      passThrough: true,
+    })
+
+    await cli.execute(['-h'], io)
+
+    expect(io.stdout.text()).toContain('Usage\n  $ exec [flags] <...command>\n')
+  })
+
   it('notes defaults and repeatable flags in help', async () => {
     const io = createMemoryIo()
 
@@ -349,6 +389,8 @@ describe('createCli definition checks', () => {
     ['a malformed spelling', [leaf('a', { flags: [{ description: '', flag: '--config=<path>' }] })], 'is not a valid spelling'],
     ['a negated flag with a value', [leaf('a', { flags: [{ description: '', flag: '--no-cache <dir>' }] })], 'is negated, so it cannot take a value'],
     ['a bad argument', [leaf('a', { arguments: [{ description: '', name: 'files', variadic: true }, { description: '', name: 'out' }] })], 'must be last'],
+    ['passThrough with children', [defineCommand({ action: () => 0, arguments: [{ description: '', name: 'x', variadic: true }], children: [leaf('b')], description: '', name: 'a', passThrough: true })], 'command "a" passes arguments through, so it cannot have subcommands'],
+    ['passThrough without a variadic argument', [leaf('a', { arguments: [{ description: '', name: 'x' }], passThrough: true })], 'command "a" passes arguments through, so its last argument must be variadic'],
     ['arguments on a command without an action', [defineCommand({ arguments: [{ description: '', name: 'x' }], children: [leaf('b')], description: '', name: 'a' })], 'declares arguments but no action'],
     ['a leaf without an action', [defineCommand({ description: '', name: 'a' })], 'command "a" has neither an action nor children'],
   ])('rejects %s', (_, children, message) => {

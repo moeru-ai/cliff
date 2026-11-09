@@ -24,6 +24,7 @@ cac and meow parse flags well, but nested subcommands, per-command help, exit co
   - [Use another parser](#use-another-parser)
 - [Flags](#flags)
 - [Arguments](#arguments)
+  - [Pass arguments through](#pass-arguments-through)
 - [Concepts](#concepts)
 - [Parsers](#parsers)
 - [API at a glance](#api-at-a-glance)
@@ -96,8 +97,20 @@ const ls = defineCommand({
 })
 const providers = defineCommand({ children: [ls], description: 'Manage providers', name: 'providers' })
 
+// `tool exec --dry eslint --fix src` hands `eslint --fix src` over untouched, as `pnpm exec` does.
+const exec = defineCommand({
+  action: ({ args, flags, io }) => {
+    io.stdout.write(`${flags.dry ? 'would run' : 'running'}: ${args.command.join(' ')}\n`)
+  },
+  arguments: [{ description: 'Command and its arguments', name: 'command', required: true, variadic: true }],
+  description: 'Run a command',
+  flags: [{ description: 'Print the command instead of running it', flag: '--dry' }],
+  name: 'exec',
+  passThrough: true,
+})
+
 export const cli = createCli({
-  children: [providers, lint],
+  children: [providers, exec, lint],
   description: 'An example tool.',
   name: 'tool',
   version: '1.0.0',
@@ -133,6 +146,7 @@ Usage
 
 Commands
   providers <command>  Manage providers
+  exec <...command>    Run a command
   lint [...files]      Lint files (default)
 
 Flags
@@ -278,6 +292,21 @@ Keys are the camelCase name: `report-path` becomes `reportPath`. `default` repla
 
 Arguments bind left to right, so only the last argument may be variadic, and a required argument cannot follow an optional one. Extra positionals are a usage error. Help lists each argument with its description and default.
 
+### Pass arguments through
+
+Tokens after a bare `--` are never parsed as flags. They bind to the arguments, so the command needs a variadic argument to receive them, and they are also in `context.rest`: `tool lint -- --weird-file-name` lints a file named `--weird-file-name`.
+
+A command that wraps another program, as `pnpm exec` does, sets `passThrough: true`. Everything from its first positional on is passed through untouched, flags and `--` included. Its own flags must come before that point, and its last argument must be variadic:
+
+<!-- docs:output tool exec --dry eslint --fix src --dry -->
+```console
+$ tool exec --dry eslint --fix src --dry
+would run: eslint --fix src --dry
+```
+<!-- /docs:output -->
+
+`passThrough` is only allowed on a command without children, since a child name would otherwise be passed on.
+
 ## Concepts
 
 | Concept | Behavior |
@@ -285,7 +314,7 @@ Arguments bind left to right, so only the last argument may be variadic, and a r
 | Routing | The first positional that names a child selects it. Otherwise, a `default: true` child receives it. |
 | Built-ins | `-h`/`--help` prints help for the selected command. `-v`/`--version` is enabled by `version`. Both are reserved. |
 | Exit codes | The value returned by `action` (nothing means 0). Help and version exit 0. Usage errors, including a `UsageError` thrown by an action, exit 2. Other errors are rethrown. |
-| `--` | Later tokens are not parsed. They are bound to positionals and also exposed as `context.rest`. |
+| `--` | Later tokens are not parsed. They are bound to positionals and also exposed as `context.rest`. See [Pass arguments through](#pass-arguments-through). |
 | Definition errors | Malformed spellings or argument names, duplicate keys or short flags, arguments in an impossible order, reserved names, and ambiguous trees throw `DefinitionError` from `createCli`. |
 
 ## Parsers
@@ -308,6 +337,7 @@ An unknown flag only reaches a parser when the command sets `allowUnknownFlags`.
 | `defineCommand(definition)` | Declares a command: `name`, `description`, `flags`, `arguments`, `action` or `children`, `alias`, `default` | [Define commands](#define-commands) |
 | `defineFlags(flags)` | Keeps a shared flag set typed so it can be spread into several commands | [Flags](#flags) |
 | `arguments` in `defineCommand` | Positional arguments: `name`, `description`, `required`, `variadic`, `default`, `schema` | [Arguments](#arguments) |
+| `passThrough` in `defineCommand` | Passes every token from the first positional on to the action untouched | [Pass arguments through](#pass-arguments-through) |
 | `cli.run({ argv?, signal? })` | Runs as the process entrypoint and sets `process.exitCode` | [Run](#run) |
 | `cli.execute(argv, io, { signal? })` | Runs one invocation without `process` and resolves to the exit code | [Test](#test) |
 | `context` in `action` | `args`, `flags`, `io`, `path`, `rest`, `signal` | [Define commands](#define-commands) |
