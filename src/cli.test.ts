@@ -1,5 +1,9 @@
+import type { CliDefinition } from './cli'
 import type { CommandContext, CommandResult } from './command'
+import type { UsageIssue } from './errors'
+import type { Help } from './help'
 import type { ArgvParser } from './parser'
+import type { UsageErrorReport } from './usage-error'
 
 import { describe, expect, it, vi } from 'vitest'
 
@@ -9,10 +13,12 @@ import { createCli } from './cli'
 import { defineCommand } from './command'
 import { DefinitionError, UsageError } from './errors'
 import { defineFlags } from './flags'
+import { renderHelp } from './help'
 import { cacParser } from './parsers/cac'
 import { meowParser } from './parsers/meow'
 import { nodeParser } from './parsers/node'
 import { createMemoryIo } from './testing'
+import { renderUsageError } from './usage-error'
 
 type Run = (context: CommandContext) => CommandResult | Promise<CommandResult>
 
@@ -21,7 +27,9 @@ const sharedFlags = defineFlags([
   { description: 'Disable the cache', flag: '--no-cache' },
 ])
 
-function createSampleCli(parser: ArgvParser, run: Run) {
+type Renderers = Pick<CliDefinition, 'renderHelp' | 'renderUsageError'>
+
+function createSampleCli(parser: ArgvParser, run: Run, renderers: Renderers = {}) {
   const lint = defineCommand({
     action: context => run(context),
     arguments: [{ description: 'Files to lint', name: 'files', variadic: true }],
@@ -58,6 +66,21 @@ function createSampleCli(parser: ArgvParser, run: Run) {
     name: 'alint',
     parser,
     version: '1.2.3',
+    ...renderers,
+  })
+}
+
+function createServeCli(parser: ArgvParser, renderers: Renderers = {}) {
+  return createCli({
+    action: () => 0,
+    arguments: [
+      { description: 'Port', name: 'port', required: true, schema: v.pipe(v.string(), v.toNumber(), v.integer()) },
+      { default: 'dev', description: 'Mode', name: 'mode', schema: v.picklist(['dev', 'prod']) },
+    ],
+    description: '',
+    name: 'serve',
+    parser,
+    ...renderers,
   })
 }
 
@@ -200,6 +223,79 @@ describe.each([nodeParser, cacParser, meowParser])('parser contract: $name', (pa
     expect(io.stderr.text().split('\n')[0]).toBe(message)
     expect(io.stderr.text()).toContain('--help` for usage.')
     expect(run).not.toHaveBeenCalled()
+  })
+
+  const lsCommand = { aliases: ['list'], argumentsLabel: '[provider]', default: false, description: 'List providers', hasChildren: false, name: 'ls' }
+
+  it.each<[string, (parser: ArgvParser, renderers: Renderers) => ReturnType<typeof createCli>, string[], UsageErrorReport]>([
+    ['flag-requires-value (long)', (parser, renderers) => createSampleCli(parser, () => 0, renderers), ['--config'], {
+      // Routing has not finished when a value is missing, so the hint points at the root.
+      command: 'alint',
+      issue: { code: 'flag-requires-value', flag: '--config' },
+      message: 'flag --config requires a value',
+    }],
+    ['flag-requires-value (short)', (parser, renderers) => createSampleCli(parser, () => 0, renderers), ['-c', '--dirty'], {
+      // Routing has not finished when a value is missing, so the hint points at the root.
+      command: 'alint',
+      issue: { code: 'flag-requires-value', flag: '-c' },
+      message: 'flag -c requires a value',
+    }],
+    ['invalid-choice', (parser, renderers) => createSampleCli(parser, () => 0, renderers), ['-f', 'xml'], {
+      command: 'alint lint',
+      issue: { choices: ['stylish', 'json'], code: 'invalid-choice', flag: '--format', received: 'xml' },
+      message: 'flag --format must be one of stylish, json, received "xml"',
+    }],
+    ['invalid-value (flag)', (parser, renderers) => createSampleCli(parser, () => 0, renderers), ['--retries', '1.5'], {
+      command: 'alint lint',
+      issue: { code: 'invalid-value', label: '--retries', messages: ['Invalid integer: Received 1.5'], target: 'flag' },
+      message: 'flag --retries: Invalid integer: Received 1.5',
+    }],
+    ['invalid-value (argument)', createServeCli, ['8080', 'staging'], {
+      command: 'serve',
+      issue: { code: 'invalid-value', label: '[mode]', messages: ['Invalid type: Expected ("dev" | "prod") but received "staging"'], target: 'argument' },
+      message: 'argument [mode]: Invalid type: Expected ("dev" | "prod") but received "staging"',
+    }],
+    ['missing-argument', createServeCli, [], {
+      command: 'serve',
+      issue: { argument: '<port>', code: 'missing-argument' },
+      message: 'missing required argument <port>',
+    }],
+    ['missing-command', (parser, renderers) => createSampleCli(parser, () => 0, renderers), ['config', 'providers'], {
+      command: 'alint config providers',
+      commands: [lsCommand],
+      issue: { code: 'missing-command', command: 'alint config providers' },
+      message: 'missing command for "alint config providers"',
+    }],
+    ['unexpected-argument', (parser, renderers) => createSampleCli(parser, () => 0, renderers), ['config', 'providers', 'ls', 'a', 'b'], {
+      command: 'alint config providers ls',
+      issue: { code: 'unexpected-argument', received: 'b' },
+      message: 'unexpected argument "b"',
+    }],
+    ['unknown-command', (parser, renderers) => createSampleCli(parser, () => 0, renderers), ['config', 'providers', 'nope'], {
+      command: 'alint config providers',
+      commands: [lsCommand],
+      issue: { code: 'unknown-command', command: 'alint config providers', received: 'nope' },
+      message: 'unknown command "nope" for "alint config providers"',
+    }],
+    ['unknown-flag (long)', (parser, renderers) => createSampleCli(parser, () => 0, renderers), ['config', 'providers', 'ls', '--dirty'], {
+      command: 'alint config providers ls',
+      issue: { code: 'unknown-flag', flag: '--dirty' },
+      message: 'unknown flag --dirty',
+    }],
+    ['unknown-flag (short)', (parser, renderers) => createSampleCli(parser, () => 0, renderers), ['-x'], {
+      command: 'alint lint',
+      issue: { code: 'unknown-flag', flag: '-x' },
+      message: 'unknown flag -x',
+    }],
+  ])('passes the %s issue to renderUsageError', async (_, create, argv, expected) => {
+    const renderUsageError = vi.fn((report: UsageErrorReport) => `custom: ${report.issue?.code}\n`)
+    const io = createMemoryIo()
+
+    expect(await create(parser, { renderUsageError }).execute(argv, io)).toBe(2)
+    expect(renderUsageError).toHaveBeenCalledOnce()
+    expect(renderUsageError.mock.calls[0]![0]).toStrictEqual(expected)
+    expect(io.stderr.text()).toBe(`custom: ${expected.issue!.code}\n`)
+    expect(io.stdout.text()).toBe('')
   })
 })
 
@@ -502,5 +598,229 @@ describe('flag schemas', () => {
 
     expect(await cli.execute(['--port', '1', '--port', '2.5'], io)).toBe(2)
     expect(io.stderr.text().split('\n')[0]).toBe('error: flag --port: Invalid integer: Received 2.5')
+  })
+})
+
+describe('render hooks', () => {
+  async function captureHelp(argv: string[], create: (renderers: Renderers) => ReturnType<typeof createCli> = renderers => createSampleCli(nodeParser, () => 0, renderers)) {
+    const renderHelp = vi.fn((_: Help) => 'custom help\n')
+    const io = createMemoryIo()
+    const exitCode = await create({ renderHelp }).execute(argv, io)
+
+    expect(exitCode).toBe(0)
+    expect(renderHelp).toHaveBeenCalledOnce()
+    expect(io.stdout.text()).toBe('custom help\n')
+    expect(io.stderr.text()).toBe('')
+
+    return renderHelp.mock.calls[0]![0]
+  }
+
+  const helpFlag = { builtin: 'help', label: '-h, --help', long: 'help', short: 'h' } as const
+  const versionFlag = { builtin: 'version', label: '-v, --version', long: 'version', short: 'v' } as const
+  const configFlag = { choices: undefined, default: undefined, description: 'Config file', label: '-c, --config <path>', long: 'config', repeatable: false, short: 'c' }
+  const cacheFlag = { choices: undefined, default: undefined, description: 'Disable the cache', label: '--no-cache', long: 'cache', repeatable: false, short: undefined }
+
+  it('passes the root help with its children and the version flag', async () => {
+    expect(await captureHelp(['--help'])).toStrictEqual({
+      arguments: [],
+      command: 'alint',
+      commands: [
+        { aliases: [], argumentsLabel: '', default: false, description: 'Manage configuration', hasChildren: true, name: 'config' },
+        { aliases: [], argumentsLabel: '[...files]', default: true, description: 'Lint files', hasChildren: false, name: 'lint' },
+      ],
+      description: 'AI-assisted linting.',
+      examples: [],
+      flags: [helpFlag, versionFlag],
+      help: undefined,
+      name: 'alint',
+      usage: ['alint <command> [flags]'],
+    } satisfies Help)
+  })
+
+  it('passes a nested command with its aliases listed by the parent', async () => {
+    expect((await captureHelp(['config', 'providers', '-h'])).commands).toStrictEqual([
+      { aliases: ['list'], argumentsLabel: '[provider]', default: false, description: 'List providers', hasChildren: false, name: 'ls' },
+    ])
+
+    expect(await captureHelp(['config', 'providers', 'list', '-h'])).toStrictEqual({
+      arguments: [{ default: undefined, description: 'Provider name', label: '[provider]', name: 'provider', required: false, variadic: false }],
+      command: 'alint config providers ls',
+      commands: [],
+      description: 'List providers',
+      examples: [],
+      flags: [
+        configFlag,
+        cacheFlag,
+        { choices: undefined, default: undefined, description: 'Use project scope', label: '-l, --local', long: 'local', repeatable: false, short: 'l' },
+        helpFlag,
+        versionFlag,
+      ],
+      help: undefined,
+      name: 'ls',
+      usage: ['alint config providers ls [provider] [flags]'],
+    } satisfies Help)
+  })
+
+  it('passes defaults, choices, and repeatable flags unformatted', async () => {
+    const help = await captureHelp(['lint', '--help'])
+
+    expect(help.arguments).toStrictEqual([{ default: undefined, description: 'Files to lint', label: '[...files]', name: 'files', required: false, variadic: true }])
+    expect(help.flags).toStrictEqual([
+      configFlag,
+      cacheFlag,
+      { choices: undefined, default: undefined, description: 'Lint changed files only', label: '--dirty', long: 'dirty', repeatable: false, short: undefined },
+      { choices: ['stylish', 'json'], default: 'stylish', description: 'Reporter', label: '-f, --format <stylish|json>', long: 'format', repeatable: false, short: 'f' },
+      { choices: undefined, default: undefined, description: 'Run name', label: '--name <name>', long: 'name', repeatable: false, short: undefined },
+      { choices: undefined, default: undefined, description: 'Retry count', label: '--retries <n>', long: 'retries', repeatable: false, short: undefined },
+      { choices: undefined, default: undefined, description: 'Rule filter', label: '--rule <pattern...>', long: 'rule', repeatable: true, short: undefined },
+      { choices: undefined, default: undefined, description: 'Timeout', label: '--timeout-ms <ms>', long: 'timeout-ms', repeatable: false, short: undefined },
+      helpFlag,
+      versionFlag,
+    ])
+  })
+
+  it('passes argument defaults, examples, and the help paragraph, without a version flag', async () => {
+    const help = await captureHelp(['--help'], renderers => createCli({
+      action: () => 0,
+      arguments: [
+        { description: 'Port', name: 'port', required: true },
+        { default: 'dev', description: 'Mode', name: 'mode' },
+        { default: ['a', 'b'], description: 'Files', name: 'files', variadic: true },
+      ],
+      description: 'Serve files',
+      examples: ['serve 8080', 'serve 8080 prod\nserve 8080 dev a b'],
+      flags: [
+        { default: false, description: 'Watch', flag: '--watch' },
+        { default: [], description: 'Hosts', flag: '--host <name...>' },
+        { default: ['x'], description: 'Tags', flag: '--tag <name...>' },
+      ],
+      help: 'Serves files over HTTP.',
+      name: 'serve',
+      ...renderers,
+    }))
+
+    expect(help).toStrictEqual({
+      arguments: [
+        { default: undefined, description: 'Port', label: '<port>', name: 'port', required: true, variadic: false },
+        { default: 'dev', description: 'Mode', label: '[mode]', name: 'mode', required: false, variadic: false },
+        { default: ['a', 'b'], description: 'Files', label: '[...files]', name: 'files', required: false, variadic: true },
+      ],
+      command: 'serve',
+      commands: [],
+      description: 'Serve files',
+      examples: ['serve 8080', 'serve 8080 prod\nserve 8080 dev a b'],
+      // A boolean default and an empty list are not shown, so they are absent here too.
+      flags: [
+        { choices: undefined, default: undefined, description: 'Watch', label: '--watch', long: 'watch', repeatable: false, short: undefined },
+        { choices: undefined, default: undefined, description: 'Hosts', label: '--host <name...>', long: 'host', repeatable: true, short: undefined },
+        { choices: undefined, default: ['x'], description: 'Tags', label: '--tag <name...>', long: 'tag', repeatable: true, short: undefined },
+        helpFlag,
+      ],
+      help: 'Serves files over HTTP.',
+      name: 'serve',
+      usage: ['serve <port> [mode] [...files] [flags]'],
+    } satisfies Help)
+  })
+
+  it('renders the default help from the model exactly as without a hook', async () => {
+    const cli = createCli({
+      action: () => 0,
+      arguments: [{ default: ['a', 'b'], description: 'Files', name: 'files', variadic: true }],
+      description: 'Serve files',
+      examples: ['serve a', 'serve a\nserve b'],
+      flags: [{ default: ['x'], description: 'Tags', flag: '-t, --tag <name...>' }],
+      help: 'Serves files over HTTP.',
+      name: 'serve',
+    })
+    const io = createMemoryIo()
+
+    await cli.execute(['--help'], io)
+
+    expect(io.stdout.text()).toMatchInlineSnapshot(`
+      "Serves files over HTTP.
+
+      Usage
+        $ serve [...files] [flags]
+
+      Arguments
+        [...files]  Files (default: a, b)
+
+      Flags
+        -t, --tag <name...>  Tags (repeatable, default: x)
+        -h, --help           Show help
+
+      Examples
+        serve a
+
+        serve a
+        serve b
+      "
+    `)
+  })
+
+  it.each([
+    [['--help']],
+    [['lint', '--help']],
+    [['config', 'providers', 'ls', '-h']],
+    [['config']],
+    [['config', 'nope']],
+    [['-f', 'xml']],
+    [['--retries', '1.5']],
+  ])('produces today\'s text for %j when the exported defaults are passed as hooks', async (argv) => {
+    const plain = createMemoryIo()
+    const hooked = createMemoryIo()
+
+    const plainCode = await createSampleCli(nodeParser, () => 0).execute(argv, plain)
+    const hookedCode = await createSampleCli(nodeParser, () => 0, {
+      renderHelp: help => renderHelp(help),
+      renderUsageError: report => renderUsageError(report),
+    }).execute(argv, hooked)
+
+    expect(hookedCode).toBe(plainCode)
+    expect(hooked.stdout.text()).toBe(plain.stdout.text())
+    expect(hooked.stderr.text()).toBe(plain.stderr.text())
+    expect(plain.stdout.text() + plain.stderr.text()).not.toBe('')
+  })
+
+  it('passes a UsageError thrown by an action without an issue', async () => {
+    const renderUsageError = vi.fn((report: UsageErrorReport) => `custom: ${report.message}\n`)
+    const io = createMemoryIo()
+    const cli = createSampleCli(nodeParser, () => {
+      throw new UsageError('--dirty does not accept files')
+    }, { renderUsageError })
+
+    expect(await cli.execute(['src'], io)).toBe(2)
+    expect(renderUsageError.mock.calls[0]![0]).toStrictEqual({ command: 'alint lint', issue: undefined, message: '--dirty does not accept files' })
+    expect(io.stderr.text()).toBe('custom: --dirty does not accept files\n')
+  })
+
+  it('passes a UsageError thrown by an action with its issue', async () => {
+    const issue: UsageIssue = { code: 'unexpected-argument', received: 'src' }
+    const renderUsageError = vi.fn((_: UsageErrorReport) => 'custom\n')
+    const io = createMemoryIo()
+    const cli = createSampleCli(nodeParser, () => {
+      throw new UsageError('unexpected argument "src"', { issue })
+    }, { renderUsageError })
+
+    expect(await cli.execute(['src'], io)).toBe(2)
+    expect(renderUsageError.mock.calls[0]![0]).toStrictEqual({ command: 'alint lint', issue, message: 'unexpected argument "src"' })
+  })
+
+  it('constructs a UsageError with an optional issue and cause', async () => {
+    const error = new UsageError('boom', { cause: 'reason', issue: { code: 'unknown-flag', flag: '--x' } })
+
+    expect(error.message).toBe('boom')
+    expect(error.cause).toBe('reason')
+    expect(error.issue).toEqual({ code: 'unknown-flag', flag: '--x' })
+    expect(new UsageError('plain').issue).toBeUndefined()
+  })
+
+  it('leaves version output to the definition', async () => {
+    const renderHelp = vi.fn(() => '')
+    const io = createMemoryIo()
+
+    expect(await createSampleCli(nodeParser, () => 0, { renderHelp }).execute(['-v'], io)).toBe(0)
+    expect(io.stdout.text()).toBe('1.2.3\n')
+    expect(renderHelp).not.toHaveBeenCalled()
   })
 })

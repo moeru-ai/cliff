@@ -25,6 +25,7 @@ cac and meow parse flags well, but nested subcommands, per-command help, exit co
 - [Flags](#flags)
 - [Arguments](#arguments)
   - [Pass arguments through](#pass-arguments-through)
+- [Custom help and usage errors](#custom-help-and-usage-errors)
 - [Concepts](#concepts)
 - [Parsers](#parsers)
 - [API at a glance](#api-at-a-glance)
@@ -210,6 +211,8 @@ Run `tool providers --help` for usage.
 ```
 <!-- /docs:output -->
 
+The wording and layout of both are the defaults. To translate them or lay them out differently, see [Custom help and usage errors](#custom-help-and-usage-errors).
+
 ### Test
 
 `cli.execute(argv, io)` touches no `process` state and resolves to the exit code. `io` only needs `stdout` and `stderr`; `createMemoryIo` from `@moeru/cliff/testing` captures both:
@@ -307,6 +310,207 @@ would run: eslint --fix src --dry
 
 `passThrough` is only allowed on a command without children, since a child name would otherwise be passed on.
 
+## Custom help and usage errors
+
+By default, help and usage errors are in English. `createCli` takes two optional hooks that replace that text. cliff gives each hook structured data, and the hook returns the full text to write:
+
+| Hook | Receives | Output |
+|---|---|---|
+| `renderHelp(help)` | `Help`, the model of the selected command | stdout, exit code 0 |
+| `renderUsageError(report)` | `UsageErrorReport` | stderr, exit code 2 |
+
+Use them when the CLI is translated, or when it needs a different help layout. Command, flag, and argument descriptions are your own strings, so translate them where you define them. The hooks cover only the text that cliff writes itself: section titles, the built-in flags, default notes, and error messages. Schema messages come from the schema, so translate them in the schema library. `--version` prints your own string and is not passed to a hook.
+
+`Help` holds what the default help shows, before any wording is applied:
+
+| Field | Contents |
+|---|---|
+| `command`, `name` | The command path from the CLI name (`tool providers ls`) and the command name |
+| `description`, `help` | The command's description, and its longer `help` paragraph if it has one |
+| `usage` | The usage lines as cliff formats them, without the `$ ` prompt |
+| `arguments` | `label` (`[...files]`), `name`, `description`, `required`, `variadic`, `default` |
+| `commands` | The children: `name`, `aliases`, `description`, `default`, `hasChildren`, `argumentsLabel` |
+| `flags` | Declared flags: `label` (`-c, --config <path>`), `long`, `short`, `description`, `default`, `repeatable`, `choices`. Then the built-ins. |
+| `examples` | The command's examples |
+
+The built-in `--help` and `--version` are the last entries of `flags`, so one list keeps the order and the column width of the default help. They have `builtin: 'help'` or `builtin: 'version'` and no description, so the hook supplies the text. `--version` is listed only when `version` is set. A `default` is absent when the default help does not show it: for boolean flags and empty lists.
+
+`UsageErrorReport` has the English `message`, the `command` that the `--help` hint points at, an `issue`, and `commands` (the children) when a subcommand is missing or unknown. `issue` is undefined for a `UsageError` that an action throws without one. Every usage error that cliff reports has one of these issues:
+
+| `code` | Fields | Default message |
+|---|---|---|
+| `missing-command` | `command` | `missing command for "tool providers"` |
+| `unknown-command` | `command`, `received` | `unknown command "nope" for "tool providers"` |
+| `unknown-flag` | `flag`, as typed | `unknown flag --nope` |
+| `flag-requires-value` | `flag`, as typed | `flag --config requires a value` |
+| `invalid-choice` | `flag`, `choices`, `received` | `flag --format must be one of stylish, json, received "xml"` |
+| `missing-argument` | `argument`, its label | `missing required argument <port>` |
+| `unexpected-argument` | `received` | `unexpected argument "b"` |
+| `invalid-value` | `target` (`'flag'` or `'argument'`), `label`, `messages` from the schema | `flag --retries: Invalid integer: Received 1.5` |
+
+An action can attach an issue too: `throw new UsageError(message, { issue })`. `UsageIssue` is a union keyed by `code`, so a `switch` over it is checked for every code. This example writes help and usage errors in Chinese:
+
+<!-- docs:example examples/localized.ts -->
+```ts
+import type { Help, HelpFlag, UsageIssue } from '@moeru/cliff'
+
+import { createCli, defineCommand, formatRows } from '@moeru/cliff'
+
+// Command and flag descriptions are your own strings, so they are written in Chinese directly.
+// Everything cliff itself would word in English goes through the two hooks below.
+const serve = defineCommand({
+  action: ({ args, flags, io }) => {
+    io.stdout.write(`在 ${args.port} 端口提供 ${args.dir}（日志级别：${flags.log}）\n`)
+  },
+  alias: ['s'],
+  arguments: [
+    { description: '监听的端口', name: 'port', required: true },
+    { default: '.', description: '要提供的目录', name: 'dir' },
+  ],
+  description: '启动开发服务器',
+  examples: ['tool-zh serve 8080', 'tool-zh serve 8080 dist --log debug'],
+  flags: [
+    { default: 'info', description: '日志级别', flag: '-l, --log <debug|info|warn>' },
+    { description: '额外的响应头', flag: '--header <value...>' },
+  ],
+  name: 'serve',
+})
+
+const builtins = { help: '显示帮助', version: '显示版本' }
+
+function describeFlag(flag: HelpFlag): string {
+  if (flag.builtin !== undefined) {
+    return builtins[flag.builtin]
+  }
+
+  const notes = [
+    ...(flag.repeatable ? ['可重复'] : []),
+    ...(flag.default === undefined ? [] : [`默认：${String(flag.default)}`]),
+  ]
+
+  return notes.length > 0 ? `${flag.description}（${notes.join('，')}）` : flag.description
+}
+
+function describeIssue(issue: UsageIssue): string {
+  switch (issue.code) {
+    case 'flag-requires-value':
+      return `选项 ${issue.flag} 需要一个值`
+    case 'invalid-choice':
+      return `选项 ${issue.flag} 只能是 ${issue.choices.join('、')} 之一，收到了“${issue.received}”`
+    case 'invalid-value':
+      // The messages come from the schema, so translate them there (Valibot, Zod, and ArkType all can).
+      return `${issue.target === 'flag' ? '选项' : '参数'} ${issue.label} 无效：${issue.messages.join('；')}`
+    case 'missing-argument':
+      return `缺少必填参数 ${issue.argument}`
+    case 'missing-command':
+      return `“${issue.command}”需要一个子命令`
+    case 'unexpected-argument':
+      return `多余的参数“${issue.received}”`
+    case 'unknown-command':
+      return `“${issue.command}”没有子命令“${issue.received}”`
+    case 'unknown-flag':
+      return `未知的选项 ${issue.flag}`
+  }
+}
+
+function renderHelp(help: Help): string {
+  const sections = [
+    help.help ?? help.description,
+    `用法\n${help.usage.map(line => `  $ ${line}`).join('\n')}`,
+  ]
+
+  if (help.arguments.length > 0) {
+    sections.push(`参数\n${formatRows(help.arguments.map(argument => ({
+      description: argument.default === undefined ? argument.description : `${argument.description}（默认：${String(argument.default)}）`,
+      label: argument.label,
+    })))}`)
+  }
+
+  if (help.commands.length > 0) {
+    sections.push(`命令\n${formatRows(help.commands.map(command => ({
+      description: command.default ? `${command.description}（默认）` : command.description,
+      label: [[command.name, ...command.aliases].join(', '), command.hasChildren ? '<command>' : command.argumentsLabel].filter(Boolean).join(' '),
+    })))}`)
+  }
+
+  sections.push(`选项\n${formatRows(help.flags.map(flag => ({
+    description: describeFlag(flag),
+    label: flag.short === undefined ? `    ${flag.label}` : flag.label,
+  })))}`)
+
+  if (help.examples.length > 0) {
+    sections.push(`示例\n${help.examples.map(example => `  ${example}`).join('\n')}`)
+  }
+
+  return `${sections.join('\n\n')}\n`
+}
+
+export const cli = createCli({
+  children: [serve],
+  description: '一个中文界面的示例工具。',
+  name: 'tool-zh',
+  renderHelp,
+  renderUsageError: (report) => {
+    // An action may throw a `UsageError` without an issue; its message is all there is.
+    const message = report.issue ? describeIssue(report.issue) : report.message
+    const commands = report.commands
+      ? `\n\n可用的命令\n${formatRows(report.commands.map(command => ({ description: command.description, label: command.name })))}`
+      : ''
+
+    return `错误：${message}${commands}\n\n运行 \`${report.command} --help\` 查看用法。\n`
+  },
+  version: '1.0.0',
+})
+```
+<!-- /docs:example -->
+
+<!-- docs:output tool-zh serve --help -->
+```console
+$ tool-zh serve --help
+启动开发服务器
+
+用法
+  $ tool-zh serve <port> [dir] [flags]
+
+参数
+  <port>  监听的端口
+  [dir]   要提供的目录（默认：.）
+
+选项
+  -l, --log <debug|info|warn>  日志级别（默认：info）
+      --header <value...>      额外的响应头（可重复）
+  -h, --help                   显示帮助
+  -v, --version                显示版本
+
+示例
+  tool-zh serve 8080
+  tool-zh serve 8080 dist --log debug
+```
+<!-- /docs:output -->
+
+<!-- docs:output tool-zh serve --log trace 8080 -->
+```console
+$ tool-zh serve --log trace 8080
+错误：选项 --log 只能是 debug、info、warn 之一，收到了“trace”
+
+运行 `tool-zh serve --help` 查看用法。
+```
+<!-- /docs:output -->
+
+<!-- docs:output tool-zh -->
+```console
+$ tool-zh
+错误：“tool-zh”需要一个子命令
+
+可用的命令
+  serve  启动开发服务器
+
+运行 `tool-zh --help` 查看用法。
+```
+<!-- /docs:output -->
+
+The default renderers are exported as `renderHelp` and `renderUsageError`, so a hook can also change the model and then call them, or post-process their text. `formatRows` lays out a two-column list the way the default help does.
+
 ## Concepts
 
 | Concept | Behavior |
@@ -333,7 +537,7 @@ An unknown flag only reaches a parser when the command sets `allowUnknownFlags`.
 
 | API | What it does | Section |
 |---|---|---|
-| `createCli(definition)` | Validates the command tree and returns a `Cli`. `parser` and `version` are set here. | [Define commands](#define-commands) |
+| `createCli(definition)` | Validates the command tree and returns a `Cli`. `parser`, `version`, `renderHelp`, and `renderUsageError` are set here. | [Define commands](#define-commands) |
 | `defineCommand(definition)` | Declares a command: `name`, `description`, `flags`, `arguments`, `action` or `children`, `alias`, `default` | [Define commands](#define-commands) |
 | `defineFlags(flags)` | Keeps a shared flag set typed so it can be spread into several commands | [Flags](#flags) |
 | `arguments` in `defineCommand` | Positional arguments: `name`, `description`, `required`, `variadic`, `default`, `schema` | [Arguments](#arguments) |
@@ -341,7 +545,10 @@ An unknown flag only reaches a parser when the command sets `allowUnknownFlags`.
 | `cli.run({ argv?, signal? })` | Runs as the process entrypoint and sets `process.exitCode` | [Run](#run) |
 | `cli.execute(argv, io, { signal? })` | Runs one invocation without `process` and resolves to the exit code | [Test](#test) |
 | `context` in `action` | `args`, `flags`, `io`, `path`, `rest`, `signal` | [Define commands](#define-commands) |
-| `UsageError` | Thrown by an action for a usage mistake the definitions cannot express; exits 2 | [Concepts](#concepts) |
+| `UsageError` | Thrown by an action for a usage mistake the definitions cannot express; exits 2. Has an optional `issue`. | [Concepts](#concepts) |
+| `renderHelp`, `renderUsageError` | The default English renderers, for hooks that reuse them | [Custom help and usage errors](#custom-help-and-usage-errors) |
+| `formatRows(rows)` | Lays out `{ label, description }` rows as the default help does | [Custom help and usage errors](#custom-help-and-usage-errors) |
+| `Help`, `UsageErrorReport`, `UsageIssue` | The data the render hooks receive | [Custom help and usage errors](#custom-help-and-usage-errors) |
 | `DefinitionError` | Thrown by `createCli` for a broken tree | [Concepts](#concepts) |
 | `createMemoryIo(overrides?)` from `@moeru/cliff/testing` | In-memory `io` whose `stdout.text()` and `stderr.text()` return what was written | [Test](#test) |
 | `nodeParser`, `cacParser`, `meowParser` from `@moeru/cliff/parsers/*` | The argv parsers | [Parsers](#parsers) |

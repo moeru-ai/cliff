@@ -10,8 +10,10 @@
 - `src/arguments.ts`: declarative positional arguments (`name`, `required`, `variadic`, `default`, `schema`), their checks, binding, and type inference. `src/schema.ts`: the Standard Schema call shared by flags and arguments.
 - `src/tree.ts`: `buildTree` validates the command tree once (`DefinitionError`) and indexes every flag.
 - `src/route.ts`: one left-to-right argv pass that selects the command and prepares parser input.
-- `src/invocation.ts`: `resolveInvocation` decides what one argv asks for (action context, help, version, or usage error) without running or writing anything. Test routing and validation here.
-- `src/help.ts`: help rendering. `src/cli.ts`: `createCli` and the run loop that turns an invocation into output and an exit code.
+- `src/invocation.ts`: `resolveInvocation` decides what one argv asks for (action context, help model, version, or usage error report) without running, rendering, or writing anything. Test routing and validation here.
+- `src/errors.ts`: `DefinitionError`, `UsageError`, and the `UsageIssue` union. Throw usage mistakes with `createUsageError(issue)` so every one carries a code and its default English message.
+- `src/help.ts`: the `Help` model (`resolveHelp`) and the default English `renderHelp`. `src/usage-error.ts`: `UsageErrorReport` and the default `renderUsageError`. Callers replace either through the `createCli` hooks, so new help or error text must also reach the model or the issue.
+- `src/cli.ts`: `createCli` and the run loop that turns an invocation into output and an exit code.
 - `src/testing.ts`: `createMemoryIo`, the public `@moeru/cliff/testing` entry.
 - `src/main.ts`: the only module bound to `process`; backs `cli.run()`. `cli.execute(argv, io)` is the process-free run.
 - `src/parser.ts`: the side-effect-free `ArgvParser` contract. `src/parsers/*`: node, cac, meow adapters, exported as subpaths.

@@ -1,16 +1,19 @@
 import type { ArgumentsDefinition } from './arguments'
 import type { CommandDefinition } from './command'
 import type { FlagsDefinition } from './flags'
+import type { Help } from './help'
 import type { Invocation } from './invocation'
 import type { CliIo } from './io'
 import type { RunOptions } from './main'
 import type { ArgvParser } from './parser'
+import type { UsageErrorReport } from './usage-error'
 
 import { UsageError } from './errors'
-import { formatCommands } from './help'
+import { renderHelp } from './help'
 import { resolveInvocation } from './invocation'
 import { nodeParser } from './parsers/node'
 import { buildTree } from './tree'
+import { renderUsageError } from './usage-error'
 
 export interface Cli {
   /**
@@ -32,6 +35,16 @@ export interface CliDefinition<
 > extends Omit<CommandDefinition<TFlags, TArguments>, 'alias' | 'default'> {
   /** Defaults to the zero-dependency `node:util` `parseArgs` adapter. */
   parser?: ArgvParser
+  /**
+   * Turns the help of the selected command into the text written to stdout, e.g. to translate
+   * it or lay it out differently. Defaults to the English `renderHelp`.
+   */
+  renderHelp?: (help: Help) => string
+  /**
+   * Turns a usage mistake into the text written to stderr; the exit code stays 2. Defaults to
+   * the English `renderUsageError`.
+   */
+  renderUsageError?: (report: UsageErrorReport) => string
   /** Enables `--version` / `-v`, which print exactly this string. */
   version?: string
 }
@@ -44,8 +57,28 @@ export function createCli<
   const TFlags extends FlagsDefinition = [],
   const TArguments extends ArgumentsDefinition = [],
 >(definition: CliDefinition<TFlags, TArguments>): Cli {
-  const { parser = nodeParser, version, ...root } = definition as CliDefinition
+  const {
+    parser = nodeParser,
+    renderHelp: formatHelp = renderHelp,
+    renderUsageError: formatUsageError = renderUsageError,
+    version,
+    ...root
+  } = definition as CliDefinition
   const tree = buildTree(root, version)
+  const writeOutcome = (invocation: Exclude<Invocation, { kind: 'action' }>, io: CliIo): number => {
+    if (invocation.kind === 'help') {
+      io.stdout.write(formatHelp(invocation.help))
+      return 0
+    }
+
+    if (invocation.kind === 'version') {
+      io.stdout.write(invocation.text)
+      return 0
+    }
+
+    io.stderr.write(formatUsageError(invocation.report))
+    return 2
+  }
 
   const cli: Cli = {
     async execute(argv, io, options = {}) {
@@ -54,7 +87,7 @@ export function createCli<
       const invocation = await resolveInvocation(tree, parser, argv, signal)
 
       if (invocation.kind !== 'action') {
-        return report(invocation, io)
+        return writeOutcome(invocation, io)
       }
 
       try {
@@ -66,7 +99,7 @@ export function createCli<
         // Actions may throw `UsageError` for checks the flag definitions cannot express,
         // such as two flags that exclude each other.
         if (error instanceof UsageError) {
-          return report({ kind: 'usage-error', message: error.message, usage: invocation.usage }, io)
+          return writeOutcome({ kind: 'usage-error', report: { command: invocation.command, issue: error.issue, message: error.message } }, io)
         }
 
         throw error
@@ -83,22 +116,4 @@ export function createCli<
   }
 
   return cli
-}
-
-function report(invocation: Exclude<Invocation, { kind: 'action' }>, io: CliIo): number {
-  if (invocation.kind !== 'usage-error') {
-    io.stdout.write(invocation.text)
-    return 0
-  }
-
-  const commands = invocation.children ? ['', 'Commands', formatCommands(invocation.children)] : []
-
-  io.stderr.write([
-    `error: ${invocation.message}`,
-    ...commands,
-    '',
-    `Run \`${invocation.usage} --help\` for usage.`,
-    '',
-  ].join('\n'))
-  return 2
 }

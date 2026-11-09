@@ -1,23 +1,26 @@
 import type { Command, CommandContext } from './command'
+import type { UsageIssue } from './errors'
+import type { Help } from './help'
 import type { ArgvParser } from './parser'
 import type { CommandTree } from './tree'
+import type { UsageErrorReport } from './usage-error'
 
 import { bindArguments } from './arguments'
-import { UsageError } from './errors'
+import { createUsageError, describeIssue, UsageError } from './errors'
 import { normalizeFlagValue } from './flags'
-import { renderHelp } from './help'
+import { listCommands, resolveHelp } from './help'
 import { resolveRoute } from './route'
 import { validateValue } from './schema'
 
 /**
  * What one argv asks for, decided without running anything or writing output.
  *
- * `usage` is the command path (`alint config`) that error hints point `--help` at.
+ * `command` is the command path (`alint config`) that error hints point `--help` at.
  */
 export type Invocation
-  = | { action: NonNullable<Command['action']>, context: Omit<CommandContext, 'io' | 'signal'>, kind: 'action', usage: string }
-    | { children?: readonly Command[], kind: 'usage-error', message: string, usage: string }
-    | { kind: 'help', text: string }
+  = | { action: NonNullable<Command['action']>, command: string, context: Omit<CommandContext, 'io' | 'signal'>, kind: 'action' }
+    | { help: Help, kind: 'help' }
+    | { kind: 'usage-error', report: UsageErrorReport }
     | { kind: 'version', text: string }
 
 export async function resolveInvocation(
@@ -26,17 +29,17 @@ export async function resolveInvocation(
   argv: readonly string[],
   signal?: AbortSignal,
 ): Promise<Invocation> {
-  let usage = tree.root.name
+  let path = tree.root.name
 
   signal?.throwIfAborted()
 
   try {
     const route = resolveRoute(tree, argv)
     const command = route.nodes.at(-1)!
-    usage = route.nodes.map(node => node.name).join(' ')
+    path = route.nodes.map(node => node.name).join(' ')
 
     if (route.help) {
-      return { kind: 'help', text: renderHelp(route.nodes, tree.flagsOf, tree.version) }
+      return { help: resolveHelp(tree, route.nodes), kind: 'help' }
     }
 
     if (route.version) {
@@ -45,18 +48,18 @@ export async function resolveInvocation(
 
     // `buildTree` guarantees a command without an action has children.
     if (!command.action) {
+      const issue: UsageIssue = route.unmatched === undefined
+        ? { code: 'missing-command', command: path }
+        : { code: 'unknown-command', command: path, received: route.unmatched }
+
       return {
-        children: command.children,
         kind: 'usage-error',
-        message: route.unmatched === undefined
-          ? `missing command for "${usage}"`
-          : `unknown command "${route.unmatched}" for "${usage}"`,
-        usage,
+        report: { command: path, commands: listCommands(tree, command.children ?? []), issue, message: describeIssue(issue) },
       }
     }
 
     if (route.unknown.length > 0 && !command.allowUnknownFlags) {
-      throw new UsageError(`unknown flag ${route.unknown[0]}`)
+      throw createUsageError({ code: 'unknown-flag', flag: route.unknown[0]! })
     }
 
     const flags = tree.flagsOf(command)
@@ -70,7 +73,7 @@ export async function resolveInvocation(
     const values: Record<string, unknown> = {}
 
     for (const flag of flags) {
-      values[flag.key] = await validateValue(flag.schema, normalizeFlagValue(flag, parsed.flags[flag.key]), `flag --${flag.long}`)
+      values[flag.key] = await validateValue(flag.schema, normalizeFlagValue(flag, parsed.flags[flag.key]), 'flag', `--${flag.long}`)
 
       // NOTICE: Standard Schema's `validate(value)` takes no signal, so an async schema that is
       // already running cannot be cancelled. Checking between flags is the earliest point an
@@ -83,7 +86,7 @@ export async function resolveInvocation(
     const args: Record<string, unknown> = {}
 
     for (const argument of definitions) {
-      args[argument.key] = await validateValue(argument.schema, bound[argument.key], `argument ${argument.label}`)
+      args[argument.key] = await validateValue(argument.schema, bound[argument.key], 'argument', argument.label)
 
       // Same limit as for flags above: a running async schema cannot be cancelled.
       signal?.throwIfAborted()
@@ -91,6 +94,7 @@ export async function resolveInvocation(
 
     return {
       action: command.action,
+      command: path,
       context: {
         args,
         flags: values,
@@ -98,12 +102,11 @@ export async function resolveInvocation(
         rest: route.rest,
       },
       kind: 'action',
-      usage,
     }
   }
   catch (error) {
     if (error instanceof UsageError) {
-      return { kind: 'usage-error', message: error.message, usage }
+      return { kind: 'usage-error', report: { command: path, issue: error.issue, message: error.message } }
     }
 
     throw error

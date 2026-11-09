@@ -2,7 +2,7 @@ import type { Command } from './command'
 import type { ResolvedFlag } from './flags'
 import type { CommandTree } from './tree'
 
-import { UsageError } from './errors'
+import { createUsageError } from './errors'
 import { indexFlags } from './tree'
 
 export interface Route {
@@ -240,7 +240,7 @@ function takeValue(tokens: readonly string[], index: number, spelling: string): 
   // A following flag means the value was forgotten; consuming it would silently swallow
   // that flag. Negative numbers and `-` (stdin/stdout by convention) still count as values.
   if (value === undefined || (value.startsWith('-') && value !== '-' && !/^-\d/u.test(value))) {
-    throw new UsageError(`flag ${spelling} requires a value`)
+    throw createUsageError({ code: 'flag-requires-value', flag: spelling })
   }
 
   return value
